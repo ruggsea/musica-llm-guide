@@ -165,6 +165,7 @@ vllm serve meta-llama/Llama-3.3-70B-Instruct \
 | MiniMax-M2.1 (229B) | `MiniMaxAI/MiniMax-M2.1` | FP8 | 53.8 GiB | 662s | `--trust-remote-code` |
 | GPT-OSS-20B (21.5B) | `openai/gpt-oss-20b` | MXFP4 | 13.5 GiB | 136s | -- |
 | GPT-OSS-120B (120B) | `openai/gpt-oss-120b` | MXFP4 | 64.4 GiB | 214s | -- |
+| MiniMax-M2.5 (229B) | `MiniMaxAI/MiniMax-M2.5` | FP8 | 53.8 GiB | 1294s | `--trust-remote-code` |
 | Kimi-Linear-48B | `moonshotai/Kimi-Linear-48B-A3B-Instruct` | BF16 | 45.9 GiB | 307s | `--trust-remote-code` |
 | GLM-4.7-Flash (30B) | `zai-org/GLM-4.7-Flash` | BF16 | ~35 GiB | ~132s | `--trust-remote-code` |
 
@@ -306,6 +307,7 @@ wait
 | Model | HuggingFace ID | Mode | Precision | Mem/GPU | Load Time | Flags |
 |-------|---------------|------|-----------|---------|-----------|-------|
 | Kimi-K2 (1032B MoE) | `moonshotai/Kimi-K2-Instruct` | DP+EP | FP8 | 73.5 GiB | 371s | `--trust-remote-code`, needs `blobfile` |
+| Kimi-K2.5 (1058B MoE) | `moonshotai/Kimi-K2.5` | DP+EP | FP8 (compressed-tensors) | ~66 GiB | 391s | `--trust-remote-code`, needs `blobfile` |
 
 ---
 
