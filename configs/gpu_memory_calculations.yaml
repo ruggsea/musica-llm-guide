@@ -1,0 +1,1192 @@
+# =============================================================================
+# GPU Memory Calculations for Open-Source LLMs on 4x NVIDIA H100 80GB
+# =============================================================================
+# Cluster Node Specification:
+#   - 4x NVIDIA H100 80GB SXM (HBM3)
+#   - Per-GPU memory: 80 GB (81,920 MB)
+#   - Total GPU memory: 320 GB (327,680 MB)
+#   - Inter-GPU: NVLink 4.0 (900 GB/s bidirectional)
+#   - Tensor parallelism degree: up to 4
+#
+# Memory Formula:
+#   Raw model memory = num_parameters * bytes_per_parameter
+#   Effective memory = Raw model memory * (1 + overhead_fraction)
+#   overhead_fraction = 0.15 (15% for KV cache, activations, CUDA context, etc.)
+#
+# Precision Bytes:
+#   FP32  = 4 bytes/param
+#   FP16  = 2 bytes/param (also BF16)
+#   INT8  = 1 byte/param  (GPTQ-8bit, bitsandbytes-8bit, SmoothQuant)
+#   INT4  = 0.5 bytes/param (GPTQ-4bit, AWQ, bitsandbytes-4bit, GGUF Q4)
+# =============================================================================
+
+hardware:
+  gpu_model: "NVIDIA H100 80GB SXM5"
+  gpu_memory_gb: 80
+  num_gpus: 4
+  total_memory_gb: 320
+  interconnect: "NVLink 4.0 (900 GB/s bidirectional)"
+  tensor_parallel_max: 4
+  overhead_fraction: 0.15  # 15% overhead for KV cache, activations, CUDA kernels
+
+# =============================================================================
+# SECTION 1: Raw Memory Calculations by Model Size
+# =============================================================================
+# Formula: memory_gb = (params_billions * bytes_per_param * 1.15) / 1.0
+#   where 1.15 accounts for 15% overhead
+#
+# Note: 1 billion parameters = 1e9 parameters
+#   FP32: 1B params = 1e9 * 4 bytes = 4.00 GB raw, 4.60 GB with overhead
+#   FP16: 1B params = 1e9 * 2 bytes = 2.00 GB raw, 2.30 GB with overhead
+#   INT8: 1B params = 1e9 * 1 byte  = 1.00 GB raw, 1.15 GB with overhead
+#   INT4: 1B params = 1e9 * 0.5 B   = 0.50 GB raw, 0.575 GB with overhead
+# =============================================================================
+
+memory_per_billion_params:
+  FP32:
+    raw_gb: 4.00
+    with_15pct_overhead_gb: 4.60
+  FP16_BF16:
+    raw_gb: 2.00
+    with_15pct_overhead_gb: 2.30
+  INT8:
+    raw_gb: 1.00
+    with_15pct_overhead_gb: 1.15
+  INT4:
+    raw_gb: 0.50
+    with_15pct_overhead_gb: 0.575
+
+# =============================================================================
+# SECTION 2: Detailed Per-Model Calculations
+# =============================================================================
+
+models:
+
+  # ---------------------------------------------------------------------------
+  # TIER 1: 1B - 3B Models
+  # ---------------------------------------------------------------------------
+
+  - name: "Llama 3.2 1B"
+    parameters_B: 1.24
+    architecture: "Dense Transformer"
+    context_length: 131072
+    memory:
+      FP32:
+        raw_gb: 4.96    # 1.24 * 4
+        with_overhead_gb: 5.70   # 4.96 * 1.15
+      FP16:
+        raw_gb: 2.48    # 1.24 * 2
+        with_overhead_gb: 2.85   # 2.48 * 1.15
+      INT8:
+        raw_gb: 1.24    # 1.24 * 1
+        with_overhead_gb: 1.43   # 1.24 * 1.15
+      INT4:
+        raw_gb: 0.62    # 1.24 * 0.5
+        with_overhead_gb: 0.71   # 0.62 * 1.15
+    fits_on_4xH100:
+      FP32: true   # 5.70 GB << 320 GB
+      FP16: true   # 2.85 GB << 320 GB
+      INT8: true   # 1.43 GB << 320 GB
+      INT4: true   # 0.71 GB << 320 GB
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false  # Fits on single GPU at any precision
+      tp_degree: 1
+      serving_framework: "vLLM or TGI"
+      notes: >
+        Extremely small model. Fits on a single GPU at FP32 with room to spare.
+        No tensor parallelism needed. Ideal for high-throughput batch inference.
+        With 131K context, KV cache can grow large -- for very long contexts,
+        consider reserving extra memory (up to ~10-20 GB for full 131K context).
+
+  - name: "Gemma 2 2B"
+    parameters_B: 2.51
+    architecture: "Dense Transformer"
+    context_length: 8192
+    memory:
+      FP32:
+        raw_gb: 10.04   # 2.51 * 4
+        with_overhead_gb: 11.55  # 10.04 * 1.15
+      FP16:
+        raw_gb: 5.02    # 2.51 * 2
+        with_overhead_gb: 5.77   # 5.02 * 1.15
+      INT8:
+        raw_gb: 2.51    # 2.51 * 1
+        with_overhead_gb: 2.89   # 2.51 * 1.15
+      INT4:
+        raw_gb: 1.26    # 2.51 * 0.5
+        with_overhead_gb: 1.45   # 1.26 * 1.15
+    fits_on_4xH100:
+      FP32: true
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false
+      tp_degree: 1
+      serving_framework: "vLLM"
+      notes: >
+        Fits on single GPU at FP32. Short 8K context keeps KV cache small.
+        Google's architecture uses grouped-query attention for efficiency.
+
+  - name: "Llama 3.2 3B"
+    parameters_B: 3.21
+    architecture: "Dense Transformer"
+    context_length: 131072
+    memory:
+      FP32:
+        raw_gb: 12.84   # 3.21 * 4
+        with_overhead_gb: 14.77  # 12.84 * 1.15
+      FP16:
+        raw_gb: 6.42    # 3.21 * 2
+        with_overhead_gb: 7.38   # 6.42 * 1.15
+      INT8:
+        raw_gb: 3.21    # 3.21 * 1
+        with_overhead_gb: 3.69   # 3.21 * 1.15
+      INT4:
+        raw_gb: 1.61    # 3.21 * 0.5
+        with_overhead_gb: 1.85   # 1.61 * 1.15
+    fits_on_4xH100:
+      FP32: true
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false
+      tp_degree: 1
+      serving_framework: "vLLM or TGI"
+      notes: >
+        Fits on single GPU at FP32. 131K context support means KV cache
+        can be significant for long sequences. For full-length contexts,
+        BF16 on a single GPU is safer to leave room for KV cache.
+
+  - name: "Phi-3-mini (3.8B)"
+    parameters_B: 3.82
+    architecture: "Dense Transformer"
+    context_length: 128000
+    memory:
+      FP32:
+        raw_gb: 15.28   # 3.82 * 4
+        with_overhead_gb: 17.57  # 15.28 * 1.15
+      FP16:
+        raw_gb: 7.64    # 3.82 * 2
+        with_overhead_gb: 8.79   # 7.64 * 1.15
+      INT8:
+        raw_gb: 3.82    # 3.82 * 1
+        with_overhead_gb: 4.39   # 3.82 * 1.15
+      INT4:
+        raw_gb: 1.91    # 3.82 * 0.5
+        with_overhead_gb: 2.20   # 1.91 * 1.15
+    fits_on_4xH100:
+      FP32: true
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false
+      tp_degree: 1
+      serving_framework: "vLLM"
+      notes: >
+        Fits on single GPU at FP32. Microsoft's model with excellent
+        instruction-following for its size. 128K context version available.
+
+  # ---------------------------------------------------------------------------
+  # TIER 2: 7B - 9B Models
+  # ---------------------------------------------------------------------------
+
+  - name: "Mistral 7B v0.3"
+    parameters_B: 7.25
+    architecture: "Dense Transformer (Sliding Window Attention)"
+    context_length: 32768
+    memory:
+      FP32:
+        raw_gb: 29.00   # 7.25 * 4
+        with_overhead_gb: 33.35  # 29.00 * 1.15
+      FP16:
+        raw_gb: 14.50   # 7.25 * 2
+        with_overhead_gb: 16.68  # 14.50 * 1.15
+      INT8:
+        raw_gb: 7.25    # 7.25 * 1
+        with_overhead_gb: 8.34   # 7.25 * 1.15
+      INT4:
+        raw_gb: 3.63    # 7.25 * 0.5
+        with_overhead_gb: 4.17   # 3.63 * 1.15
+    fits_on_4xH100:
+      FP32: true   # 33.35 GB < 80 GB single GPU
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false  # Fits on single GPU
+      tp_degree: 1
+      serving_framework: "vLLM"
+      notes: >
+        Fits on single GPU at FP32. Sliding window attention reduces KV cache
+        memory. GQA (grouped-query attention) for efficient inference.
+        Very popular base model with many fine-tunes available.
+
+  - name: "Qwen 2.5 7B"
+    parameters_B: 7.62
+    architecture: "Dense Transformer (GQA)"
+    context_length: 131072
+    memory:
+      FP32:
+        raw_gb: 30.48   # 7.62 * 4
+        with_overhead_gb: 35.05  # 30.48 * 1.15
+      FP16:
+        raw_gb: 15.24   # 7.62 * 2
+        with_overhead_gb: 17.53  # 15.24 * 1.15
+      INT8:
+        raw_gb: 7.62    # 7.62 * 1
+        with_overhead_gb: 8.76   # 7.62 * 1.15
+      INT4:
+        raw_gb: 3.81    # 7.62 * 0.5
+        with_overhead_gb: 4.38   # 3.81 * 1.15
+    fits_on_4xH100:
+      FP32: true
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false
+      tp_degree: 1
+      serving_framework: "vLLM"
+      notes: >
+        Fits on single GPU at FP32. Alibaba's model with 131K context.
+        For very long context inference, BF16 on single GPU recommended
+        to leave room for KV cache growth. Excellent multilingual support.
+
+  - name: "Llama 3.1 8B"
+    parameters_B: 8.03
+    architecture: "Dense Transformer (GQA)"
+    context_length: 131072
+    memory:
+      FP32:
+        raw_gb: 32.12   # 8.03 * 4
+        with_overhead_gb: 36.94  # 32.12 * 1.15
+      FP16:
+        raw_gb: 16.06   # 8.03 * 2
+        with_overhead_gb: 18.47  # 16.06 * 1.15
+      INT8:
+        raw_gb: 8.03    # 8.03 * 1
+        with_overhead_gb: 9.23   # 8.03 * 1.15
+      INT4:
+        raw_gb: 4.02    # 8.03 * 0.5
+        with_overhead_gb: 4.62   # 4.02 * 1.15
+    fits_on_4xH100:
+      FP32: true   # 36.94 GB < 80 GB
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false
+      tp_degree: 1
+      serving_framework: "vLLM"
+      notes: >
+        Fits on single GPU at FP32. Meta's flagship small model.
+        131K context with RoPE scaling. GQA with 8 KV heads.
+        For long-context serving, BF16 recommended to reserve KV cache space.
+
+  - name: "Phi-3-medium (14B) / Phi-3.5-mini (3.8B)"
+    parameters_B: 3.82  # Phi-3.5-mini; Phi-3-medium is 14B, see 12-14B tier
+    architecture: "Dense Transformer"
+    context_length: 128000
+    memory:
+      FP32:
+        raw_gb: 15.28
+        with_overhead_gb: 17.57
+      FP16:
+        raw_gb: 7.64
+        with_overhead_gb: 8.79
+      INT8:
+        raw_gb: 3.82
+        with_overhead_gb: 4.39
+      INT4:
+        raw_gb: 1.91
+        with_overhead_gb: 2.20
+    fits_on_4xH100:
+      FP32: true
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false
+      tp_degree: 1
+      serving_framework: "vLLM"
+      notes: "See Phi-3-mini entry above. Phi-3.5-mini is same 3.8B size."
+
+  - name: "Gemma 2 9B"
+    parameters_B: 9.24
+    architecture: "Dense Transformer (GQA, Logit Soft-Capping)"
+    context_length: 8192
+    memory:
+      FP32:
+        raw_gb: 36.96   # 9.24 * 4
+        with_overhead_gb: 42.50  # 36.96 * 1.15
+      FP16:
+        raw_gb: 18.48   # 9.24 * 2
+        with_overhead_gb: 21.25  # 18.48 * 1.15
+      INT8:
+        raw_gb: 9.24    # 9.24 * 1
+        with_overhead_gb: 10.63  # 9.24 * 1.15
+      INT4:
+        raw_gb: 4.62    # 9.24 * 0.5
+        with_overhead_gb: 5.31   # 4.62 * 1.15
+    fits_on_4xH100:
+      FP32: true   # 42.50 GB < 80 GB
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false
+      tp_degree: 1
+      serving_framework: "vLLM"
+      notes: >
+        Fits on single GPU at FP32. Short 8K context keeps memory simple.
+        Logit soft-capping may require specific vLLM version support.
+        Knowledge distillation from Gemma 2 27B gives strong quality.
+
+  # ---------------------------------------------------------------------------
+  # TIER 3: 12B - 14B Models
+  # ---------------------------------------------------------------------------
+
+  - name: "Mistral Nemo 12B"
+    parameters_B: 12.25
+    architecture: "Dense Transformer (Tekken tokenizer)"
+    context_length: 131072
+    memory:
+      FP32:
+        raw_gb: 49.00   # 12.25 * 4
+        with_overhead_gb: 56.35  # 49.00 * 1.15
+      FP16:
+        raw_gb: 24.50   # 12.25 * 2
+        with_overhead_gb: 28.18  # 24.50 * 1.15
+      INT8:
+        raw_gb: 12.25   # 12.25 * 1
+        with_overhead_gb: 14.09  # 12.25 * 1.15
+      INT4:
+        raw_gb: 6.13    # 12.25 * 0.5
+        with_overhead_gb: 7.05   # 6.13 * 1.15
+    fits_on_4xH100:
+      FP32: true   # 56.35 GB < 80 GB single GPU
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false  # Fits on single GPU at FP32
+      tp_degree: 1
+      serving_framework: "vLLM"
+      notes: >
+        Fits on single GPU at FP32 (56.35 GB < 80 GB), but tight.
+        For long context (131K) inference, use BF16 to leave KV cache room.
+        Co-developed by Mistral and NVIDIA. Large 131K context window.
+
+  - name: "Phi-3-medium (14B)"
+    parameters_B: 14.0
+    architecture: "Dense Transformer"
+    context_length: 128000
+    memory:
+      FP32:
+        raw_gb: 56.00   # 14.0 * 4
+        with_overhead_gb: 64.40  # 56.00 * 1.15
+      FP16:
+        raw_gb: 28.00   # 14.0 * 2
+        with_overhead_gb: 32.20  # 28.00 * 1.15
+      INT8:
+        raw_gb: 14.00   # 14.0 * 1
+        with_overhead_gb: 16.10  # 14.00 * 1.15
+      INT4:
+        raw_gb: 7.00    # 14.0 * 0.5
+        with_overhead_gb: 8.05   # 7.00 * 1.15
+    fits_on_4xH100:
+      FP32: true   # 64.40 GB < 80 GB single GPU
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false  # 64.40 GB < 80 GB, fits on 1 GPU
+      tp_degree: 1
+      serving_framework: "vLLM"
+      notes: >
+        Fits on single GPU at FP32 (64.40 GB < 80 GB), but tight.
+        For production with long context, BF16 recommended for headroom.
+        128K context version available. Microsoft model.
+
+  - name: "Phi-4 (14B)"
+    parameters_B: 14.0
+    architecture: "Dense Transformer"
+    context_length: 16384
+    memory:
+      FP32:
+        raw_gb: 56.00
+        with_overhead_gb: 64.40
+      FP16:
+        raw_gb: 28.00
+        with_overhead_gb: 32.20
+      INT8:
+        raw_gb: 14.00
+        with_overhead_gb: 16.10
+      INT4:
+        raw_gb: 7.00
+        with_overhead_gb: 8.05
+    fits_on_4xH100:
+      FP32: true   # 64.40 GB < 80 GB
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false
+      tp_degree: 1
+      serving_framework: "vLLM"
+      notes: >
+        Fits on single GPU at FP32, but with only ~15 GB headroom.
+        16K context keeps KV cache manageable. Microsoft's latest small model
+        with strong reasoning capabilities. Shorter context than Phi-3-medium.
+
+  - name: "Qwen 2.5 14B"
+    parameters_B: 14.77
+    architecture: "Dense Transformer (GQA)"
+    context_length: 131072
+    memory:
+      FP32:
+        raw_gb: 59.08   # 14.77 * 4
+        with_overhead_gb: 67.94  # 59.08 * 1.15
+      FP16:
+        raw_gb: 29.54   # 14.77 * 2
+        with_overhead_gb: 33.97  # 29.54 * 1.15
+      INT8:
+        raw_gb: 14.77   # 14.77 * 1
+        with_overhead_gb: 16.99  # 14.77 * 1.15
+      INT4:
+        raw_gb: 7.39    # 14.77 * 0.5
+        with_overhead_gb: 8.50   # 7.39 * 1.15
+    fits_on_4xH100:
+      FP32: true   # 67.94 GB < 80 GB single GPU
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP32"
+      tensor_parallelism_needed: false  # 67.94 < 80, tight but fits
+      tp_degree: 1
+      serving_framework: "vLLM"
+      notes: >
+        Fits on single GPU at FP32 (67.94 GB), but very tight with only
+        ~12 GB headroom. For long-context or batch inference, BF16 strongly
+        recommended, or use TP=2 at FP32 for comfortable headroom.
+
+  # ---------------------------------------------------------------------------
+  # TIER 4: 27B Models
+  # ---------------------------------------------------------------------------
+
+  - name: "Gemma 2 27B"
+    parameters_B: 27.23
+    architecture: "Dense Transformer (GQA, Logit Soft-Capping)"
+    context_length: 8192
+    memory:
+      FP32:
+        raw_gb: 108.92  # 27.23 * 4
+        with_overhead_gb: 125.26  # 108.92 * 1.15
+      FP16:
+        raw_gb: 54.46   # 27.23 * 2
+        with_overhead_gb: 62.63   # 54.46 * 1.15
+      INT8:
+        raw_gb: 27.23   # 27.23 * 1
+        with_overhead_gb: 31.31   # 27.23 * 1.15
+      INT4:
+        raw_gb: 13.62   # 27.23 * 0.5
+        with_overhead_gb: 15.66   # 13.62 * 1.15
+    fits_on_4xH100:
+      FP32: true   # 125.26 GB < 320 GB (needs TP=2)
+      FP16: true   # 62.63 GB < 80 GB (fits single GPU)
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP16/BF16"
+      max_precision_rationale: >
+        FP32 requires 125.26 GB which exceeds single GPU (80 GB) and would
+        need TP=2. BF16 at 62.63 GB fits on single GPU with headroom.
+        FP32 IS possible with TP=2 but unnecessary given BF16 quality.
+      tensor_parallelism_needed: false  # At BF16
+      tp_degree: 1  # At BF16; use TP=2 if FP32 desired
+      serving_framework: "vLLM"
+      notes: >
+        At BF16: 62.63 GB fits on single GPU with ~17 GB headroom.
+        At FP32: 125.26 GB needs TP=2 across 2 GPUs (62.63 GB each).
+        Short 8K context keeps KV cache manageable. Logit soft-capping
+        requires vLLM >= 0.5.x or compatible version.
+
+  # ---------------------------------------------------------------------------
+  # TIER 5: 32B Models
+  # ---------------------------------------------------------------------------
+
+  - name: "Qwen 2.5 32B"
+    parameters_B: 32.76
+    architecture: "Dense Transformer (GQA)"
+    context_length: 131072
+    memory:
+      FP32:
+        raw_gb: 131.04  # 32.76 * 4
+        with_overhead_gb: 150.70  # 131.04 * 1.15
+      FP16:
+        raw_gb: 65.52   # 32.76 * 2
+        with_overhead_gb: 75.35   # 65.52 * 1.15
+      INT8:
+        raw_gb: 32.76   # 32.76 * 1
+        with_overhead_gb: 37.67   # 32.76 * 1.15
+      INT4:
+        raw_gb: 16.38   # 32.76 * 0.5
+        with_overhead_gb: 18.84   # 16.38 * 1.15
+    fits_on_4xH100:
+      FP32: true   # 150.70 GB < 320 GB (needs TP=2 or TP=4)
+      FP16: true   # 75.35 GB < 80 GB (fits single GPU, tight)
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP16/BF16"
+      max_precision_rationale: >
+        BF16 at 75.35 GB fits on a single 80 GB GPU but is extremely tight.
+        For long-context serving, TP=2 at BF16 recommended (37.68 GB/GPU).
+        FP32 at 150.70 GB would need TP=2 (75.35 GB/GPU) which is also tight.
+      tensor_parallelism_needed: true  # Recommended at BF16 for long context
+      tp_degree: 2  # Minimum 2 for comfortable serving; 1 technically possible at BF16
+      serving_framework: "vLLM"
+      notes: >
+        At BF16 single GPU: 75.35 GB < 80 GB - technically fits but leaves
+        only ~4.65 GB for KV cache. Not viable for long sequences.
+        At BF16 TP=2: 37.68 GB/GPU - comfortable with room for KV cache.
+        131K context support makes TP=2 practically mandatory even at BF16.
+
+  # ---------------------------------------------------------------------------
+  # TIER 6: 70B - 72B Models
+  # ---------------------------------------------------------------------------
+
+  - name: "Llama 3.1 70B"
+    parameters_B: 70.55
+    architecture: "Dense Transformer (GQA, 8 KV heads)"
+    context_length: 131072
+    memory:
+      FP32:
+        raw_gb: 282.20  # 70.55 * 4
+        with_overhead_gb: 324.53  # 282.20 * 1.15
+      FP16:
+        raw_gb: 141.10  # 70.55 * 2
+        with_overhead_gb: 162.27  # 141.10 * 1.15
+      INT8:
+        raw_gb: 70.55   # 70.55 * 1
+        with_overhead_gb: 81.13   # 70.55 * 1.15
+      INT4:
+        raw_gb: 35.28   # 70.55 * 0.5
+        with_overhead_gb: 40.57   # 35.28 * 1.15
+    fits_on_4xH100:
+      FP32: false  # 324.53 GB > 320 GB - does NOT fit!
+      FP16: true   # 162.27 GB < 320 GB (needs TP=4, ~40.57 GB/GPU)
+      INT8: true   # 81.13 GB < 320 GB (needs TP=2, ~40.57 GB/GPU)
+      INT4: true   # 40.57 GB < 80 GB (fits single GPU)
+    recommendation:
+      max_precision: "FP16/BF16"
+      max_precision_rationale: >
+        FP32 at 324.53 GB exceeds total 320 GB - DOES NOT FIT even across
+        all 4 GPUs. BF16 at 162.27 GB needs TP=4 (40.57 GB/GPU) and fits
+        comfortably with ~39 GB/GPU headroom for KV cache.
+      tensor_parallelism_needed: true
+      tp_degree: 4  # At BF16; TP=2 at INT8; TP=1 possible at INT4
+      serving_framework: "vLLM (recommended) or TGI"
+      notes: >
+        FP32 DOES NOT FIT on 4xH100 (324.53 GB > 320 GB).
+        BF16 with TP=4: 40.57 GB/GPU - excellent headroom.
+        INT8 with TP=2: 40.57 GB/GPU - good option for throughput.
+        INT4 on single GPU: 40.57 GB - viable but quality impact.
+        GQA with 8 KV heads reduces KV cache memory significantly.
+        131K context with RoPE. Meta's workhorse model.
+
+  - name: "Llama 3.3 70B"
+    parameters_B: 70.55
+    architecture: "Dense Transformer (GQA, 8 KV heads)"
+    context_length: 131072
+    memory:
+      FP32:
+        raw_gb: 282.20
+        with_overhead_gb: 324.53
+      FP16:
+        raw_gb: 141.10
+        with_overhead_gb: 162.27
+      INT8:
+        raw_gb: 70.55
+        with_overhead_gb: 81.13
+      INT4:
+        raw_gb: 35.28
+        with_overhead_gb: 40.57
+    fits_on_4xH100:
+      FP32: false  # 324.53 > 320 GB
+      FP16: true
+      INT8: true
+      INT4: true
+    recommendation:
+      max_precision: "FP16/BF16"
+      tensor_parallelism_needed: true
+      tp_degree: 4
+      serving_framework: "vLLM"
+      notes: >
+        Same parameter count as Llama 3.1 70B. Improved instruction tuning.
+        Same memory profile. FP32 does NOT fit. BF16 TP=4 recommended.
+
+  - name: "Qwen 2.5 72B"
+    parameters_B: 72.71
+    architecture: "Dense Transformer (GQA)"
+    context_length: 131072
+    memory:
+      FP32:
+        raw_gb: 290.84  # 72.71 * 4
+        with_overhead_gb: 334.47  # 290.84 * 1.15
+      FP16:
+        raw_gb: 145.42  # 72.71 * 2
+        with_overhead_gb: 167.23  # 145.42 * 1.15
+      INT8:
+        raw_gb: 72.71   # 72.71 * 1
+        with_overhead_gb: 83.62   # 72.71 * 1.15
+      INT4:
+        raw_gb: 36.36   # 72.71 * 0.5
+        with_overhead_gb: 41.81   # 36.36 * 1.15
+    fits_on_4xH100:
+      FP32: false  # 334.47 GB > 320 GB
+      FP16: true   # 167.23 GB < 320 GB (TP=4: 41.81 GB/GPU)
+      INT8: true   # 83.62 GB < 320 GB (TP=2: 41.81 GB/GPU)
+      INT4: true   # 41.81 GB < 80 GB (single GPU)
+    recommendation:
+      max_precision: "FP16/BF16"
+      tensor_parallelism_needed: true
+      tp_degree: 4  # At BF16
+      serving_framework: "vLLM"
+      notes: >
+        FP32 DOES NOT FIT (334.47 GB > 320 GB). Same tier as Llama 70B.
+        BF16 with TP=4: 41.81 GB/GPU - good headroom.
+        INT8 with TP=2: 41.81 GB/GPU - excellent for throughput.
+        Very strong multilingual and coding capabilities.
+
+  # ---------------------------------------------------------------------------
+  # TIER 7: ~105B Models
+  # ---------------------------------------------------------------------------
+
+  - name: "Llama 4 Scout (109B, MoE)"
+    parameters_B: 109.0
+    active_parameters_B: 17.0  # 16 experts, 1 active
+    architecture: "Mixture of Experts (16 experts, 1 active per token)"
+    context_length: 524288  # 512K reported context
+    is_moe: true
+    memory:
+      # ALL 109B params must be loaded regardless of active params
+      FP32:
+        raw_gb: 436.00  # 109.0 * 4
+        with_overhead_gb: 501.40  # 436.00 * 1.15
+      FP16:
+        raw_gb: 218.00  # 109.0 * 2
+        with_overhead_gb: 250.70  # 218.00 * 1.15
+      INT8:
+        raw_gb: 109.00  # 109.0 * 1
+        with_overhead_gb: 125.35  # 109.00 * 1.15
+      INT4:
+        raw_gb: 54.50   # 109.0 * 0.5
+        with_overhead_gb: 62.68   # 54.50 * 1.15
+    fits_on_4xH100:
+      FP32: false  # 501.40 GB >> 320 GB
+      FP16: true   # 250.70 GB < 320 GB (TP=4: 62.68 GB/GPU)
+      INT8: true   # 125.35 GB < 320 GB (TP=2: 62.68 GB/GPU)
+      INT4: true   # 62.68 GB < 80 GB (single GPU, tight)
+    recommendation:
+      max_precision: "FP16/BF16"
+      max_precision_rationale: >
+        FP32 at 501.40 GB far exceeds 320 GB total.
+        BF16 at 250.70 GB fits with TP=4 (62.68 GB/GPU), leaving ~17 GB
+        per GPU for KV cache. With 512K context, KV cache can be enormous.
+      tensor_parallelism_needed: true
+      tp_degree: 4  # At BF16
+      serving_framework: "vLLM (with MoE support)"
+      notes: >
+        MoE model - all 109B params must be in GPU memory even though only
+        ~17B are active per token. FLOPS cost is similar to a 17B dense model
+        but memory cost is that of 109B. BF16 TP=4 is viable but 512K
+        context will consume significant KV cache memory. For full 512K
+        context, INT8 with TP=4 recommended to leave maximum KV cache room.
+        Meta's first MoE release. 16 experts with 1 active per token.
+
+  # ---------------------------------------------------------------------------
+  # TIER 8: 141B Models (Mixtral 8x22B)
+  # ---------------------------------------------------------------------------
+
+  - name: "Mixtral 8x22B (141B total, ~39B active)"
+    parameters_B: 141.0
+    active_parameters_B: 39.1  # 2 of 8 experts active per token
+    architecture: "Mixture of Experts (8 experts, top-2 routing)"
+    context_length: 65536
+    is_moe: true
+    memory:
+      # ALL 141B params must be loaded
+      FP32:
+        raw_gb: 564.00  # 141.0 * 4
+        with_overhead_gb: 648.60  # 564.00 * 1.15
+      FP16:
+        raw_gb: 282.00  # 141.0 * 2
+        with_overhead_gb: 324.30  # 282.00 * 1.15
+      INT8:
+        raw_gb: 141.00  # 141.0 * 1
+        with_overhead_gb: 162.15  # 141.00 * 1.15
+      INT4:
+        raw_gb: 70.50   # 141.0 * 0.5
+        with_overhead_gb: 81.08   # 70.50 * 1.15
+    fits_on_4xH100:
+      FP32: false  # 648.60 GB >> 320 GB
+      FP16: false  # 324.30 GB > 320 GB -- DOES NOT FIT
+      INT8: true   # 162.15 GB < 320 GB (TP=4: 40.54 GB/GPU)
+      INT4: true   # 81.08 GB < 320 GB (TP=2: 40.54 GB/GPU)
+    recommendation:
+      max_precision: "INT8"
+      max_precision_rationale: >
+        FP32 at 648.60 GB far exceeds capacity.
+        BF16 at 324.30 GB EXCEEDS 320 GB total -- does NOT fit even
+        across all 4 GPUs. INT8 at 162.15 GB with TP=4 gives 40.54 GB/GPU,
+        leaving ~39 GB/GPU for KV cache and overhead.
+      tensor_parallelism_needed: true
+      tp_degree: 4  # At INT8
+      serving_framework: "vLLM (with MoE + quantization support)"
+      notes: >
+        CRITICAL: BF16 does NOT fit on 4xH100 (324.30 GB > 320 GB).
+        INT8 is the maximum precision. Use GPTQ-8bit or SmoothQuant.
+        INT8 TP=4: 40.54 GB/GPU - comfortable for 64K context.
+        INT4 TP=2: 40.54 GB/GPU - alternative if INT8 tools unavailable.
+        MoE with top-2 routing means ~39B params active per token.
+        Mistral's largest open model. Good for diverse tasks.
+
+  # ---------------------------------------------------------------------------
+  # TIER 9: 236B Models (DeepSeek-V2)
+  # ---------------------------------------------------------------------------
+
+  - name: "DeepSeek-V2 (236B total, ~21B active)"
+    parameters_B: 236.0
+    active_parameters_B: 21.0
+    architecture: "Mixture of Experts (160 experts, top-6 routing) + MLA"
+    context_length: 128000
+    is_moe: true
+    memory:
+      FP32:
+        raw_gb: 944.00  # 236.0 * 4
+        with_overhead_gb: 1085.60  # 944.00 * 1.15
+      FP16:
+        raw_gb: 472.00  # 236.0 * 2
+        with_overhead_gb: 542.80  # 472.00 * 1.15
+      INT8:
+        raw_gb: 236.00  # 236.0 * 1
+        with_overhead_gb: 271.40  # 236.00 * 1.15
+      INT4:
+        raw_gb: 118.00  # 236.0 * 0.5
+        with_overhead_gb: 135.70  # 118.00 * 1.15
+    fits_on_4xH100:
+      FP32: false  # 1085.60 GB >> 320 GB
+      FP16: false  # 542.80 GB >> 320 GB
+      INT8: true   # 271.40 GB < 320 GB (TP=4: 67.85 GB/GPU)
+      INT4: true   # 135.70 GB < 320 GB (TP=4: 33.93 GB/GPU)
+    recommendation:
+      max_precision: "INT8"
+      max_precision_rationale: >
+        FP32 and BF16 far exceed capacity.
+        INT8 at 271.40 GB with TP=4 gives 67.85 GB/GPU, leaving only
+        ~12 GB/GPU for KV cache. Tight but workable for moderate context.
+      tensor_parallelism_needed: true
+      tp_degree: 4
+      serving_framework: "vLLM (with MoE support)"
+      notes: >
+        INT8 TP=4 is very tight (67.85 GB/GPU). For long context, INT4
+        is safer (33.93 GB/GPU). Multi-head Latent Attention (MLA) greatly
+        reduces KV cache compared to standard MHA -- this is a significant
+        advantage. 160 experts with top-6 routing. DeepSeek's innovative
+        architecture. INT4 TP=4 recommended for production serving.
+        MLA compresses KV cache by ~93%, which is critical at 128K context.
+
+  # ---------------------------------------------------------------------------
+  # TIER 10: 405B Models (Llama 3.1 405B)
+  # ---------------------------------------------------------------------------
+
+  - name: "Llama 3.1 405B"
+    parameters_B: 405.0
+    architecture: "Dense Transformer (GQA, 8 KV heads)"
+    context_length: 131072
+    is_moe: false
+    memory:
+      FP32:
+        raw_gb: 1620.00  # 405.0 * 4
+        with_overhead_gb: 1863.00  # 1620.00 * 1.15
+      FP16:
+        raw_gb: 810.00   # 405.0 * 2
+        with_overhead_gb: 931.50   # 810.00 * 1.15
+      INT8:
+        raw_gb: 405.00   # 405.0 * 1
+        with_overhead_gb: 465.75   # 405.00 * 1.15
+      INT4:
+        raw_gb: 202.50   # 405.0 * 0.5
+        with_overhead_gb: 232.88   # 202.50 * 1.15
+    fits_on_4xH100:
+      FP32: false   # 1863.00 GB >> 320 GB
+      FP16: false   # 931.50 GB >> 320 GB
+      INT8: false   # 465.75 GB >> 320 GB
+      INT4: true    # 232.88 GB < 320 GB (TP=4: 58.22 GB/GPU)
+    recommendation:
+      max_precision: "INT4"
+      max_precision_rationale: >
+        Only INT4 fits on 4xH100. 232.88 GB with TP=4 gives 58.22 GB/GPU,
+        leaving ~21.78 GB/GPU for KV cache. This is the ONLY viable option
+        on this hardware. For BF16, you need 8xH100 (or more) nodes.
+      tensor_parallelism_needed: true
+      tp_degree: 4
+      serving_framework: "vLLM with AWQ or GPTQ-4bit quantization"
+      notes: >
+        IMPORTANT: This is a dense 405B model -- one of the largest dense
+        open-source models. Only INT4 quantization fits on 4xH100.
+        INT4 TP=4: 58.22 GB/GPU - workable but limited KV cache room.
+        For INT8: need 8xH100 (465.75 GB / 8 = 58.22 GB/GPU).
+        For BF16: need 16xH100 (931.50 GB / 16 = 58.22 GB/GPU).
+        For FP32: need 32xH100 minimum.
+        Use AWQ or GPTQ-4bit. Some quality degradation at INT4 for this
+        large model. Meta recommends BF16 for best quality.
+
+  # ---------------------------------------------------------------------------
+  # TIER 11: 671B Models (DeepSeek-V3, DeepSeek-R1)
+  # ---------------------------------------------------------------------------
+
+  - name: "DeepSeek-V3 (671B total, ~37B active)"
+    parameters_B: 671.0
+    active_parameters_B: 37.0
+    architecture: "Mixture of Experts (256 experts + 1 shared, top-8 routing) + MLA"
+    context_length: 131072
+    is_moe: true
+    memory:
+      FP32:
+        raw_gb: 2684.00  # 671.0 * 4
+        with_overhead_gb: 3086.60  # 2684.00 * 1.15
+      FP16:
+        raw_gb: 1342.00  # 671.0 * 2
+        with_overhead_gb: 1543.30  # 1342.00 * 1.15
+      INT8:
+        raw_gb: 671.00   # 671.0 * 1
+        with_overhead_gb: 771.65   # 671.00 * 1.15
+      INT4:
+        raw_gb: 335.50   # 671.0 * 0.5
+        with_overhead_gb: 385.83   # 335.50 * 1.15
+    fits_on_4xH100:
+      FP32: false   # 3086.60 GB >> 320 GB
+      FP16: false   # 1543.30 GB >> 320 GB
+      INT8: false   # 771.65 GB >> 320 GB
+      INT4: false   # 385.83 GB > 320 GB -- DOES NOT FIT
+    recommendation:
+      max_precision: "DOES NOT FIT on 4xH100"
+      max_precision_rationale: >
+        Even at INT4 (385.83 GB), DeepSeek-V3 exceeds the 320 GB total
+        of 4xH100 GPUs. This model requires at minimum:
+        - INT4: 8xH100 (385.83 / 8 = 48.23 GB/GPU)
+        - INT8: 16xH100 (771.65 / 16 = 48.23 GB/GPU)
+        - BF16: 32xH100 (1543.30 / 32 = 48.23 GB/GPU)
+      tensor_parallelism_needed: true
+      tp_degree: "N/A - requires more GPUs"
+      serving_framework: "vLLM with TP=8+ across multiple nodes"
+      notes: >
+        DOES NOT FIT on 4xH100 at any precision. Minimum hardware:
+        - INT4 + expert offloading: Possible on 4xH100 with NVMe offloading
+          but extremely slow due to constant expert swapping.
+        - INT4 (all in VRAM): 8xH100 (2 nodes)
+        - FP8 (native H100): 8-12xH100 depending on overhead
+        - INT8: 16xH100 (4 nodes)
+        - BF16: 32xH100 (8 nodes) -- DeepSeek's own training config
+        MLA dramatically reduces KV cache (~93% reduction vs standard MHA).
+        256 routed experts + 1 shared expert, top-8 routing per token.
+
+  - name: "DeepSeek-R1 (671B total, ~37B active)"
+    parameters_B: 671.0
+    active_parameters_B: 37.0
+    architecture: "Mixture of Experts (same as V3) + MLA, reasoning-focused"
+    context_length: 131072
+    is_moe: true
+    memory:
+      # Same as DeepSeek-V3 -- identical architecture, different training
+      FP32:
+        raw_gb: 2684.00
+        with_overhead_gb: 3086.60
+      FP16:
+        raw_gb: 1342.00
+        with_overhead_gb: 1543.30
+      INT8:
+        raw_gb: 671.00
+        with_overhead_gb: 771.65
+      INT4:
+        raw_gb: 335.50
+        with_overhead_gb: 385.83
+    fits_on_4xH100:
+      FP32: false
+      FP16: false
+      INT8: false
+      INT4: false  # 385.83 GB > 320 GB
+    recommendation:
+      max_precision: "DOES NOT FIT on 4xH100"
+      tensor_parallelism_needed: true
+      tp_degree: "N/A - requires more GPUs"
+      serving_framework: "vLLM with multi-node TP"
+      notes: >
+        Same memory footprint as DeepSeek-V3. Does NOT fit on 4xH100.
+        For reasoning tasks, consider using DeepSeek-R1 distilled models:
+        - DeepSeek-R1-Distill-Llama-70B (70B, same as Llama 70B tier)
+        - DeepSeek-R1-Distill-Qwen-32B (32B, same as Qwen 32B tier)
+        - DeepSeek-R1-Distill-Qwen-14B (14B)
+        - DeepSeek-R1-Distill-Llama-8B (8B)
+        - DeepSeek-R1-Distill-Qwen-7B (7B)
+        - DeepSeek-R1-Distill-Qwen-1.5B (1.5B)
+        These distilled models fit comfortably and retain much of R1's
+        reasoning capability.
+
+# =============================================================================
+# SECTION 3: Summary Table
+# =============================================================================
+# Quick reference: what fits on 4xH100 80GB (320 GB total)?
+#
+# | Model               | Params | FP32    | BF16    | INT8    | INT4    | Max Precision | TP  |
+# |---------------------|--------|---------|---------|---------|---------|---------------|-----|
+# | Llama 3.2 1B        |   1.2B |  5.7 GB |  2.9 GB |  1.4 GB |  0.7 GB | FP32          |  1  |
+# | Gemma 2 2B          |   2.5B | 11.6 GB |  5.8 GB |  2.9 GB |  1.5 GB | FP32          |  1  |
+# | Llama 3.2 3B        |   3.2B | 14.8 GB |  7.4 GB |  3.7 GB |  1.9 GB | FP32          |  1  |
+# | Phi-3-mini 3.8B     |   3.8B | 17.6 GB |  8.8 GB |  4.4 GB |  2.2 GB | FP32          |  1  |
+# | Mistral 7B          |   7.2B | 33.4 GB | 16.7 GB |  8.3 GB |  4.2 GB | FP32          |  1  |
+# | Qwen 2.5 7B         |   7.6B | 35.1 GB | 17.5 GB |  8.8 GB |  4.4 GB | FP32          |  1  |
+# | Llama 3.1 8B        |   8.0B | 36.9 GB | 18.5 GB |  9.2 GB |  4.6 GB | FP32          |  1  |
+# | Gemma 2 9B          |   9.2B | 42.5 GB | 21.3 GB | 10.6 GB |  5.3 GB | FP32          |  1  |
+# | Mistral Nemo 12B    |  12.2B | 56.4 GB | 28.2 GB | 14.1 GB |  7.1 GB | FP32          |  1  |
+# | Phi-3-medium 14B    |  14.0B | 64.4 GB | 32.2 GB | 16.1 GB |  8.1 GB | FP32          |  1  |
+# | Phi-4 14B           |  14.0B | 64.4 GB | 32.2 GB | 16.1 GB |  8.1 GB | FP32          |  1  |
+# | Qwen 2.5 14B        |  14.8B | 67.9 GB | 34.0 GB | 17.0 GB |  8.5 GB | FP32          |  1  |
+# | Gemma 2 27B         |  27.2B |125.3 GB | 62.6 GB | 31.3 GB | 15.7 GB | BF16 (1 GPU)  |  1  |
+# | Qwen 2.5 32B        |  32.8B |150.7 GB | 75.4 GB | 37.7 GB | 18.8 GB | BF16 (tight)  |  2* |
+# | Llama 3.1/3.3 70B   |  70.6B |324.5 GB |162.3 GB | 81.1 GB | 40.6 GB | BF16 (TP=4)   |  4  |
+# | Qwen 2.5 72B        |  72.7B |334.5 GB |167.2 GB | 83.6 GB | 41.8 GB | BF16 (TP=4)   |  4  |
+# | Llama 4 Scout 109B  | 109.0B |501.4 GB |250.7 GB |125.4 GB | 62.7 GB | BF16 (TP=4)   |  4  |
+# | Mixtral 8x22B       | 141.0B |648.6 GB |324.3 GB |162.2 GB | 81.1 GB | INT8 (TP=4)   |  4  |
+# | DeepSeek-V2         | 236.0B |  1.1 TB |542.8 GB |271.4 GB |135.7 GB | INT8 (TP=4)*  |  4  |
+# | Llama 3.1 405B      | 405.0B |  1.9 TB |931.5 GB |465.8 GB |232.9 GB | INT4 (TP=4)   |  4  |
+# | DeepSeek-V3/R1      | 671.0B |  3.1 TB |  1.5 TB |771.7 GB |385.8 GB | DOES NOT FIT  | N/A |
+#
+# * Qwen 2.5 32B: TP=1 technically fits at BF16 (75.4 GB) but only 4.6 GB
+#   headroom -- TP=2 recommended for any real workload.
+# * DeepSeek-V2 INT8 TP=4: 67.9 GB/GPU -- tight, INT4 preferred for production.
+# =============================================================================
+
+# =============================================================================
+# SECTION 4: Serving Framework Recommendations
+# =============================================================================
+
+serving_frameworks:
+  vLLM:
+    description: >
+      Primary recommendation for most models. Best throughput via continuous
+      batching and PagedAttention. Native support for tensor parallelism,
+      GPTQ, AWQ, FP8, and MoE models.
+    supported_quantizations:
+      - "FP8 (H100 native)"
+      - "GPTQ-4bit"
+      - "GPTQ-8bit"
+      - "AWQ-4bit"
+      - "bitsandbytes (NF4, INT8)"
+      - "SqueezeLLM"
+    recommended_for:
+      - "All dense models"
+      - "MoE models (Mixtral, DeepSeek)"
+      - "High-throughput batch serving"
+      - "Long-context inference (PagedAttention)"
+    tensor_parallelism: true
+    pipeline_parallelism: true  # Added in recent versions
+    max_tp: "limited by GPU count"
+    launch_example: >
+      python -m vllm.entrypoints.openai.api_server
+        --model meta-llama/Llama-3.1-70B-Instruct
+        --tensor-parallel-size 4
+        --dtype bfloat16
+        --max-model-len 32768
+        --gpu-memory-utilization 0.90
+
+  TGI:
+    description: >
+      HuggingFace Text Generation Inference. Good Docker-based deployment.
+      Slightly lower throughput than vLLM but excellent for HF ecosystem.
+    supported_quantizations:
+      - "GPTQ-4bit"
+      - "AWQ-4bit"
+      - "EETQ (INT8)"
+      - "bitsandbytes"
+    recommended_for:
+      - "HuggingFace ecosystem integration"
+      - "Docker-based deployments"
+      - "Streaming inference"
+    tensor_parallelism: true
+    launch_example: >
+      docker run --gpus all
+        ghcr.io/huggingface/text-generation-inference
+        --model-id meta-llama/Llama-3.1-8B-Instruct
+        --num-shard 4
+        --dtype bfloat16
+
+  SGLang:
+    description: >
+      Fast serving framework with RadixAttention for efficient prefix
+      caching. Excellent for chat/multi-turn workloads. Strong MoE support.
+    recommended_for:
+      - "Multi-turn conversations (RadixAttention)"
+      - "DeepSeek models (optimized support)"
+      - "MoE models"
+    tensor_parallelism: true
+    launch_example: >
+      python -m sglang.launch_server
+        --model meta-llama/Llama-3.1-70B-Instruct
+        --tp 4
+        --dtype bfloat16
+
+# =============================================================================
+# SECTION 5: FP8 Considerations (H100 Native)
+# =============================================================================
+# The H100 natively supports FP8 (E4M3 and E5M2) computation.
+# FP8 gives ~2x throughput improvement over BF16 while maintaining
+# quality close to BF16 (much better than INT8 in practice).
+#
+# FP8 memory: parameters * 1 byte (same storage as INT8)
+# But FP8 computation is done natively on H100 Tensor Cores, unlike INT8
+# which may require dequantization overhead.
+#
+# For models where INT8 is the max precision on 4xH100, FP8 is typically
+# preferred because:
+#   1. Same memory footprint as INT8
+#   2. Native H100 Tensor Core support (faster)
+#   3. Better quality than INT8 (closer to BF16)
+#   4. Supported by vLLM, TGI, and SGLang
+# =============================================================================
+
+fp8_notes:
+  bytes_per_param: 1.0  # Same as INT8
+  quality: "Near-BF16 quality, significantly better than INT8"
+  hardware_support: "Native on H100 (Hopper architecture)"
+  recommendation: >
+    For any model where INT8 is recommended, prefer FP8 on H100.
+    FP8 weights with BF16 activations is the ideal balance.
+    vLLM supports --dtype float8 or loading FP8-quantized checkpoints.
+  applicable_models:
+    - "Mixtral 8x22B: FP8 TP=4 (same memory as INT8, better quality)"
+    - "DeepSeek-V2: FP8 TP=4 (same memory as INT8, better quality)"
+    - "Any 70B model: FP8 TP=2 instead of INT8 TP=2"
+
+# =============================================================================
+# SECTION 6: KV Cache Memory Estimation
+# =============================================================================
+# KV cache memory per token (approximate):
+#   kv_cache_per_token = 2 * num_layers * num_kv_heads * head_dim * 2 (bytes, FP16)
+#
+# For Llama 3.1 70B (80 layers, 8 KV heads, head_dim=128):
+#   = 2 * 80 * 8 * 128 * 2 = 327,680 bytes = 0.3125 MB per token
+#   At 4K context: ~1.22 GB
+#   At 32K context: ~9.77 GB
+#   At 131K context: ~40.04 GB (!) -- THIS is why long context needs headroom
+#
+# For Llama 3.1 8B (32 layers, 8 KV heads, head_dim=128):
+#   = 2 * 32 * 8 * 128 * 2 = 131,072 bytes = 0.125 MB per token
+#   At 4K context: ~0.49 GB
+#   At 32K context: ~3.91 GB
+#   At 131K context: ~16.00 GB
+#
+# For DeepSeek-V3 (MLA compresses KV cache by ~93%):
+#   Effective KV cache is dramatically smaller than standard MHA models.
+#   This is why DeepSeek models are practical for long context despite
+#   their huge parameter counts.
+# =============================================================================
+
+kv_cache_estimates:
+  llama_3_1_8B:
+    layers: 32
+    kv_heads: 8
+    head_dim: 128
+    bytes_per_token_fp16: 131072  # 0.125 MB
+    at_4k_context_gb: 0.49
+    at_32k_context_gb: 3.91
+    at_131k_context_gb: 16.00
+
+  llama_3_1_70B:
+    layers: 80
+    kv_heads: 8
+    head_dim: 128
+    bytes_per_token_fp16: 327680  # 0.3125 MB
+    at_4k_context_gb: 1.22
+    at_32k_context_gb: 9.77
+    at_131k_context_gb: 40.04
+
+  llama_3_1_405B:
+    layers: 126
+    kv_heads: 8
+    head_dim: 128
+    bytes_per_token_fp16: 516096  # 0.492 MB
+    at_4k_context_gb: 1.92
+    at_32k_context_gb: 15.38
+    at_131k_context_gb: 63.12
+
+# =============================================================================
+# SECTION 7: Practical Deployment Recommendations for 4xH100 80GB
+# =============================================================================
+
+practical_recommendations:
+  best_value_models:
+    - model: "Llama 3.1 8B / Llama 3.2 3B"
+      precision: "BF16"
+      tp: 1
+      rationale: >
+        Run up to 4 independent model instances (one per GPU) for maximum
+        throughput. Ideal for high-volume, lower-complexity tasks.
+
+    - model: "Qwen 2.5 32B"
+      precision: "BF16"
+      tp: 2
+      rationale: >
+        Run 2 independent instances (TP=2 each, using GPU pairs). Strong
+        quality-to-cost ratio. Excellent for code and multilingual tasks.
+
+    - model: "Llama 3.1/3.3 70B"
+      precision: "BF16"
+      tp: 4
+      rationale: >
+        Single instance across all 4 GPUs. Highest quality dense model
+        that fits at BF16. Best for complex reasoning and generation.
+
+    - model: "Llama 3.1 405B"
+      precision: "INT4 (AWQ)"
+      tp: 4
+      rationale: >
+        Maximum model size that fits on 4xH100. Quality trade-off from
+        INT4 quantization. Consider if 70B at BF16 is insufficient.
+
+  maximum_throughput_config:
+    description: >
+      For maximum tokens/second, run 4 independent small model instances
+      (one per GPU). Example: 4x Llama 3.1 8B at BF16.
+    estimated_throughput: "4x ~2000-4000 tokens/sec = 8000-16000 total tokens/sec"
+
+  maximum_quality_config:
+    description: >
+      For maximum quality, run Llama 3.1 405B at INT4 with TP=4, or
+      Llama 3.1/3.3 70B at BF16 with TP=4 for better precision.
+    recommended: "Llama 3.3 70B at BF16 TP=4 (best quality/precision trade-off)"
+
+  moe_config:
+    description: >
+      For MoE models, Llama 4 Scout (109B) at BF16 TP=4 is the largest
+      MoE that fits comfortably. Mixtral 8x22B requires INT8/FP8.
+      DeepSeek-V3/R1 does NOT fit on 4xH100 at any precision.
+    recommended: "Llama 4 Scout BF16 TP=4 or Mixtral 8x22B FP8 TP=4"
