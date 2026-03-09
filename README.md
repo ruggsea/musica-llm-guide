@@ -37,7 +37,7 @@ Overhead (15%):   KV cache, activations, CUDA context, framework buffers
 | XL (70B) | Llama-3.3-70B, Qwen2.5-72B | 1 | 4 (TP=4) | BF16 | ~34 GB |
 | Frontier MoE | Scout (109B), GLM-4.5-Air (106B) | 1 | 4 (TP=4) | BF16 | 50-63 GB |
 | Frontier FP8 | MiMo-V2-Flash (309B), MiniMax-M2.5 (229B) | 1 | 4 (TP=4) | FP8 | 55-73 GB |
-| Multi-node 2N | Qwen3-235B, Maverick (400B), GLM-4.5 | 2 | 8 | FP8/BF16 | 49-68 GB |
+| Multi-node 2N | Qwen3-235B, Maverick (400B), Qwen3.5-397B | 2 | 8 | FP8/BF16 | 49-68 GB |
 | Multi-node 3N | DeepSeek-R1/V3.1/V3.2, Mistral-Large-3 | 3 | 12 (DP+EP) | FP8 | 47-73 GB |
 | Multi-node 4N | Kimi-K2 (1032B), Kimi-K2.5 (1058B) | 4 | 16 (DP+EP) | FP8 | 60-74 GB |
 
@@ -292,6 +292,7 @@ wait
 | GLM-4.6 (357B MoE) | `zai-org/GLM-4.6-FP8` | PP | FP8 | 42.9 GiB | 642s | `--trust-remote-code` |
 | Step-3.5-Flash (199B MoE) | `stepfun-ai/Step-3.5-Flash-FP8` | DP+EP | FP8 | ~25 GiB | 441s | `--trust-remote-code` (TP=4 fails: FP8 block constraint) |
 | Qwen3-Coder-480B (480B MoE) | `Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8` | PP | FP8 | ~50 GiB | 721s | -- |
+| Qwen3.5-397B (403B MoE) | `Qwen/Qwen3.5-397B-A17B-FP8` | DP+EP | FP8 | 57.16 GiB | 320s | Requires vLLM 0.17.0, `--enforce-eager` |
 
 #### 3 Nodes (12 GPUs)
 
@@ -326,9 +327,9 @@ wait
 
 | Model | Architecture | Issue |
 |-------|-------------|-------|
-| Qwen3.5-397B-A17B | `qwen3_5_moe` | Not in vLLM 0.15.1 |
-| GLM-5 (754B) | `glm_moe_dsa` | Not in vLLM 0.15.1 |
-| GLM-4.7-FP8 | -- | Tokenizer broken on HuggingFace |
+| Qwen3.5-397B-A17B | `qwen3_5_moe` | **FIXED** in vLLM 0.17.0 -- PASS on 2 nodes DP+EP |
+| GLM-5 (754B) | `glm_moe_dsa` | Needs vLLM 0.17.0 (testing pending) |
+| GLM-4.7-FP8 | -- | Tokenizer **FIXED** in transformers 5.3.0, needs vLLM 0.17.0 (testing pending) |
 
 ### Special Flags Reference
 
