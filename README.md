@@ -196,7 +196,7 @@ Each GPU holds a fraction of MoE experts. No Ray needed. Higher MoE throughput.
 
 **When to use which:**
 - **PP**: Most non-DeepSeek models (Qwen3-235B, Maverick, GLM-4.5/4.6)
-- **DP+EP**: All DeepSeek-V3 architecture models, Kimi-K2/K2.5, Mistral-Large-3
+- **DP+EP**: All DeepSeek-V3 architecture models, Kimi-K2/K2.5, Mistral-Large-3, Step-3.5-Flash-FP8 (FP8 block constraint prevents TP=4)
 
 > **Bug**: PP mode broken for `DeepseekV3ForCausalLM` and `DeepseekV32ForCausalLM` after transformers 5.3.0 (`KeyError: model.layers.X.self_attn.attn`). Also broken for `PixtralForConditionalGeneration` (Mistral-Large-3).
 
@@ -289,6 +289,7 @@ wait
 | Maverick (400B MoE) | `meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8` | PP | FP8 | 49.0 GiB | 290s | -- |
 | GLM-4.5 (355B MoE) | `zai-org/GLM-4.5-FP8` | PP | FP8 | 51.0 GiB | 630s | `--trust-remote-code` |
 | GLM-4.6 (357B MoE) | `zai-org/GLM-4.6-FP8` | PP | FP8 | 42.9 GiB | 642s | `--trust-remote-code` |
+| Step-3.5-Flash (199B MoE) | `stepfun-ai/Step-3.5-Flash-FP8` | DP+EP | FP8 | ~25 GiB | 441s | `--trust-remote-code` (TP=4 fails: FP8 block constraint) |
 | Qwen3-Coder-480B (480B MoE) | `Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8` | PP | FP8 | ~50 GiB | 721s | -- |
 
 #### 3 Nodes (12 GPUs)
