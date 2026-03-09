@@ -1,18 +1,33 @@
 # Running Open-Source LLMs on MUSICA
 
-I spent way too much time figuring out how to deploy every open-source LLM on the ASC MUSICA cluster. This is what I learned so you don't have to.
+Practical guide to deploying open-source LLMs on [MUSICA](https://docs.asc.ac.at/systems/musica.html), the GPU partition of Austria's national supercomputing infrastructure operated by the [ASC](https://asc.ac.at) (Austrian Supercomputing Centre, formerly VSC).
 
-Everything here has been tested on **4x H100 94GB nodes** with vLLM. Every model in the [Arena leaderboard](https://lmarena.ai/) that has open weights -- from 0.6B to 1T+ parameters -- loads and generates on this cluster.
-
-> ASC = Austrian Supercomputing Centre (formerly VSC). MUSICA is the GPU partition.
+Everything here has been tested with vLLM. Every model in the [Arena leaderboard](https://lmarena.ai/) that has open weights -- from 0.6B to 1T+ parameters -- loads and generates on this cluster.
 
 > March 2026 | vLLM 0.15.1 + 0.17.0 | PyTorch 2.9/2.10 | CUDA 13.0
 
 ## The cluster
 
-Each node has 4x H100 SXM5 (94 GB each, 376 GB total), 192 AMD Zen4 cores, 768 GB RAM. Nodes talk over InfiniBand. There are 112 GPU nodes on the `zen4_0768_h100x4` partition.
+MUSICA (Multi-Site Computer Austria) spans three sites (Vienna, Innsbruck, Linz) with 440 total compute nodes on Lenovo Neptune direct liquid cooling. The Vienna site has the GPU partition used in this guide.
 
-Quick math: `memory = params (B) x bytes_per_param x 1.15`. BF16 = 2 bytes, FP8 = 1 byte, INT4 = 0.5 bytes. The 1.15 is overhead (KV cache, activations, CUDA context).
+| | GPU nodes | CPU nodes |
+|---|---|---|
+| **Partition** | `zen4_0768_h100x4` | `zen4_0768` |
+| **Nodes** | 112 | 72 |
+| **GPUs** | 4x NVIDIA H100 SXM5 (94 GB HBM3 each) | -- |
+| **CPUs** | 2x AMD EPYC 9654 (192 cores, 8 NUMA nodes) | same |
+| **RAM** | 768 GB DDR5 | same |
+| **Local NVMe** | 7.68 TB | 1.92 TB |
+| **Interconnect** | 4x InfiniBand NDR200 | 1x InfiniBand NDR200 |
+| **QoS** | `zen4_0768_h100x4` (72h) / `dev_zen4_0768_h100x4` (10min, 2 nodes) | same pattern |
+
+**Storage** (per project):
+- `$HOME`: 50 GB, NVMe-backed, backed up. Config/scripts only.
+- `$DATA`: 10 TB default (extendable to 100 TB), tiered flash+HDD (IBM Spectrum Scale). Model weights go here.
+- `$SCRATCH`: 5 TB, 4 PB all-NVMe WekaFS (1.8 TB/s read). Fast I/O, not backed up.
+- `/local`: 7.68 TB node-local SSD, wiped between jobs.
+
+**Quick memory math**: `memory = params (B) x bytes_per_param x 1.15`. BF16 = 2 bytes, FP8 = 1 byte, INT4 = 0.5 bytes. The 1.15 accounts for KV cache, activations, and CUDA context overhead.
 
 ## What fits where
 
@@ -167,9 +182,9 @@ PP is broken for DeepSeek-V3/V3.2, Mistral-Large-3 (`PixtralForConditionalGenera
 | Model | HF ID | Mode | VRAM/GPU | Load | Notes |
 |-------|-------|------|----------|------|-------|
 | Qwen3-235B | `Qwen/Qwen3-235B-A22B` | PP | 55.1 GiB | 600s | |
-| Maverick (400B) | `meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8` | PP | 49.0 GiB | 290s | |
+| Maverick (400B) | `meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8` | PP | 49.0 GiB | 351s | |
 | GLM-4.5 (355B) | `zai-org/GLM-4.5-FP8` | PP | 51.0 GiB | 630s | `--trust-remote-code` |
-| GLM-4.6 (357B) | `zai-org/GLM-4.6-FP8` | PP | 42.9 GiB | 642s | `--trust-remote-code` |
+| GLM-4.6 (357B) | `zai-org/GLM-4.6-FP8` | PP | 42.4 GiB | 641s | `--trust-remote-code` |
 | Step-3.5-Flash (199B) | `stepfun-ai/Step-3.5-Flash-FP8` | DP+EP | ~25 GiB | 441s | `--trust-remote-code` |
 | Qwen3-Coder-480B | `Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8` | PP | ~50 GiB | 721s | |
 | Qwen3.5-397B | `Qwen/Qwen3.5-397B-A17B-FP8` | DP+EP | 57.2 GiB | 320s | vLLM 0.17.0, `--enforce-eager` |
@@ -182,7 +197,9 @@ PP is broken for DeepSeek-V3/V3.2, Mistral-Large-3 (`PixtralForConditionalGenera
 | DeepSeek-R1 (671B) | `deepseek-ai/DeepSeek-R1` | PP | ~57 GiB | 581s | |
 | DeepSeek-V3.1 (685B) | `deepseek-ai/DeepSeek-V3.1` | DP+EP | 47-57 GiB | 290s | needs DeepGEMM |
 | DeepSeek-V3.2 (671B) | `deepseek-ai/DeepSeek-V3.2` | DP+EP | 70-73 GiB | 300s | needs DeepGEMM |
+| DeepSeek-V3.2-Exp (671B) | `deepseek-ai/DeepSeek-V3.2-Exp` | DP+EP | 70-73 GiB | 340s | needs DeepGEMM |
 | Mistral-Large-3 (675B) | `mistralai/Mistral-Large-3-675B-Instruct-2512` | DP+EP | ~63 GiB | 310s | `--tokenizer-mode mistral --config-format mistral --load-format mistral` |
+| GLM-5 (754B) | `zai-org/GLM-5-FP8` | DP+EP | 77-80 GiB | 310s | vLLM 0.17.0, `--trust-remote-code`, gpu_mem=0.95 |
 
 **4 nodes (16 GPUs)**
 
@@ -190,6 +207,7 @@ PP is broken for DeepSeek-V3/V3.2, Mistral-Large-3 (`PixtralForConditionalGenera
 |-------|-------|------|----------|------|-------|
 | Kimi-K2 (1032B) | `moonshotai/Kimi-K2-Instruct` | DP+EP | 73.5 GiB | 371s | needs `blobfile` |
 | Kimi-K2.5 (1058B) | `moonshotai/Kimi-K2.5` | DP+EP | ~66 GiB | 391s | needs `blobfile` |
+| Kimi-K2-Thinking (1032B) | `moonshotai/Kimi-K2-Thinking` | DP+EP | 55.3 GiB | 341s | INT4 QAT, `--trust-remote-code` |
 
 ## Things that don't work
 
@@ -217,6 +235,22 @@ This is where most of the pain was. FP8 MoE models (DeepSeek, Kimi, MiniMax, Mis
 - **ZMQ port collision in DP+EP** happens ~1/3 of the time. Just resubmit
 - **Monitor disk**: the HF cache grows fast. `du -sh /data/.../hf-cache/hub/models--*/` to find the big ones
 - **SSH tunnel for API**: `ssh -NL 8000:<node>:8000 user@musica.vsc.ac.at`
+
+## Scripts
+
+This repo includes ready-to-use SLURM scripts in `scripts/`:
+
+| Script | Use case | Example |
+|--------|----------|---------|
+| `serve_single_node.sh` | 1 node, any model up to ~300B MoE | `sbatch scripts/serve_single_node.sh meta-llama/Llama-3.3-70B-Instruct bfloat16 4` |
+| `serve_multinode_pp.sh` | Multi-node with Ray Pipeline Parallel | `sbatch -N 2 scripts/serve_multinode_pp.sh Qwen/Qwen3-235B-A22B auto 4` |
+| `serve_multinode_dpep.sh` | Multi-node DP+EP for MoE models | `sbatch -N 3 scripts/serve_multinode_dpep.sh deepseek-ai/DeepSeek-V3.2 auto` |
+
+All scripts expose an OpenAI-compatible API on port 8000. Access via SSH tunnel:
+```bash
+ssh -NL 8000:<node>:8000 user@musica.vsc.ac.at
+curl http://localhost:8000/v1/models
+```
 
 ## Models needing `--trust-remote-code`
 
