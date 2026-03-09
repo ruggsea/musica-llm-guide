@@ -38,7 +38,7 @@ Overhead (15%):   KV cache, activations, CUDA context, framework buffers
 | Frontier MoE | Scout (109B), GLM-4.5-Air (106B) | 1 | 4 (TP=4) | BF16 | 50-63 GB |
 | Frontier FP8 | MiMo-V2-Flash (309B), MiniMax-M2.5 (229B) | 1 | 4 (TP=4) | FP8 | 55-73 GB |
 | Multi-node 2N | Qwen3-235B, Maverick (400B), Qwen3.5-397B | 2 | 8 | FP8/BF16 | 49-68 GB |
-| Multi-node 3N | DeepSeek-R1/V3.1/V3.2, Mistral-Large-3 | 3 | 12 (DP+EP) | FP8 | 47-73 GB |
+| Multi-node 3N | DeepSeek-R1/V3.1/V3.2, Mistral-Large-3, GLM-5 | 3 | 12 (DP+EP) | FP8 | 47-80 GB |
 | Multi-node 4N | Kimi-K2 (1032B), Kimi-K2.5 (1058B) | 4 | 16 (DP+EP) | FP8 | 60-74 GB |
 
 ---
@@ -303,6 +303,7 @@ wait
 | DeepSeek-V3.1 (685B MoE) | `deepseek-ai/DeepSeek-V3.1` | DP+EP | FP8 | 47-57 GiB | 290s | Needs DeepGEMM |
 | DeepSeek-V3.2 (671B MoE) | `deepseek-ai/DeepSeek-V3.2` | DP+EP | FP8 | 70-73 GiB | 300s | Needs DeepGEMM |
 | Mistral-Large-3 (675B MoE) | `mistralai/Mistral-Large-3-675B-Instruct-2512` | DP+EP | FP8 | ~63 GiB | 310s | `--tokenizer-mode mistral --config-format mistral --load-format mistral` |
+| GLM-5 (754B MoE) | `zai-org/GLM-5-FP8` | DP+EP | FP8 | 77-80 GiB | 310s | Requires vLLM 0.17.0, `--trust-remote-code`, `gpu_memory_utilization=0.95` |
 
 #### 4 Nodes (16 GPUs)
 
@@ -329,7 +330,7 @@ wait
 | Model | Architecture | Issue |
 |-------|-------------|-------|
 | Qwen3.5-397B-A17B | `qwen3_5_moe` | **FIXED** in vLLM 0.17.0 -- PASS on 2 nodes DP+EP |
-| GLM-5 (754B) | `glm_moe_dsa` | Needs vLLM 0.17.0 (testing pending) |
+| GLM-5 (754B) | `glm_moe_dsa` | **FIXED** in vLLM 0.17.0 + transformers 5.3.0 -- PASS on 3 nodes DP+EP |
 | GLM-4.7-FP8 | -- | **FIXED** in vLLM 0.17.0 -- PASS on 2 nodes DP+EP |
 
 ### Special Flags Reference
