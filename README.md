@@ -293,6 +293,7 @@ wait
 | Step-3.5-Flash (199B MoE) | `stepfun-ai/Step-3.5-Flash-FP8` | DP+EP | FP8 | ~25 GiB | 441s | `--trust-remote-code` (TP=4 fails: FP8 block constraint) |
 | Qwen3-Coder-480B (480B MoE) | `Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8` | PP | FP8 | ~50 GiB | 721s | -- |
 | Qwen3.5-397B (403B MoE) | `Qwen/Qwen3.5-397B-A17B-FP8` | DP+EP | FP8 | 57.16 GiB | 320s | Requires vLLM 0.17.0, `--enforce-eager` |
+| GLM-4.7 (358B MoE) | `zai-org/GLM-4.7-FP8` | DP+EP | FP8 | 56.57 GiB | 270s | Requires vLLM 0.17.0, `--trust-remote-code` |
 
 #### 3 Nodes (12 GPUs)
 
@@ -329,7 +330,7 @@ wait
 |-------|-------------|-------|
 | Qwen3.5-397B-A17B | `qwen3_5_moe` | **FIXED** in vLLM 0.17.0 -- PASS on 2 nodes DP+EP |
 | GLM-5 (754B) | `glm_moe_dsa` | Needs vLLM 0.17.0 (testing pending) |
-| GLM-4.7-FP8 | -- | Tokenizer **FIXED** in transformers 5.3.0, needs vLLM 0.17.0 (testing pending) |
+| GLM-4.7-FP8 | -- | **FIXED** in vLLM 0.17.0 -- PASS on 2 nodes DP+EP |
 
 ### Special Flags Reference
 
