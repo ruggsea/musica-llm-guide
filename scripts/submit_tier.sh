@@ -22,7 +22,7 @@ mkdir -p logs
 
 echo "Submitting: ${TIER_NAME} tier (${#MODELS[@]} models, ${TIER_GPUS} GPUs)"
 
-SBATCH_OUT=$(sbatch \
+SBATCH_OUT=$(sbatch --account=p201276 \
     --gres="gpu:${TIER_GPUS}" \
     --job-name "tier_${TIER_NAME}" \
     --output "logs/tier_${TIER_NAME}_%j.out" \

@@ -202,6 +202,7 @@ elif [ "$MODE" = "dpep" ]; then
             export VLLM_CACHE_ROOT=/data/fs201045/rl41113/vllm-cache
             export VLLM_ENGINE_READY_TIMEOUT_S=1800
             ${DEEPGEMM_EXPORTS}
+            ${EXTRA_ENV_EXPORTS:-}
             echo \"[Worker \$(hostname)] CUDA_VISIBLE_DEVICES=\${CUDA_VISIBLE_DEVICES:-unset}, nvidia-smi GPUs: \$(nvidia-smi -L 2>/dev/null | wc -l)\"
             vllm serve $MODEL_ID \
                 --headless \
@@ -232,6 +233,7 @@ elif [ "$MODE" = "dpep" ]; then
         export VLLM_CACHE_ROOT=/data/fs201045/rl41113/vllm-cache
         export VLLM_ENGINE_READY_TIMEOUT_S=1800
         ${DEEPGEMM_EXPORTS}
+        ${EXTRA_ENV_EXPORTS:-}
         echo \"[Master \$(hostname)] CUDA_VISIBLE_DEVICES=\${CUDA_VISIBLE_DEVICES:-unset}, nvidia-smi GPUs: \$(nvidia-smi -L 2>/dev/null | wc -l)\"
         vllm serve $MODEL_ID \
             --port $PORT \
@@ -324,7 +326,13 @@ if [ "$RESULT" = "PASS" ]; then
 fi
 curl -s -d "$MSG" ntfy.sh/ruggsea-vsc >/dev/null 2>&1 || true
 
-# ── Cleanup ──────────────────────────────────────────────────
+# ── Cleanup or stay alive ─────────────────────────────────────
+if [ "${KEEP_ALIVE:-0}" = "1" ] && [ "$RESULT" = "PASS" ]; then
+    echo "KEEP_ALIVE=1 — staying alive for inference until SLURM timeout or external scancel"
+    # Wait on the server PID — exits when vLLM dies or job is cancelled
+    wait $SERVER_PID 2>/dev/null
+    echo "Server exited."
+fi
 if [ "$MODE" = "pp" ]; then
     ray stop 2>/dev/null || true
 fi

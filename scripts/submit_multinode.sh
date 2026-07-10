@@ -28,7 +28,7 @@ echo "Submitting: ${SERVED_NAME} (${NODES} nodes, mode=${MODE})"
 echo "  Model: ${MODEL_ID}"
 echo "  Config: ${CONFIG}"
 
-SBATCH_OUT=$(sbatch \
+SBATCH_OUT=$(sbatch --account=p201276 \
     -N "${NODES}" \
     --job-name "${SERVED_NAME}" \
     --output "logs/multinode/${SERVED_NAME}_%j.out" \
