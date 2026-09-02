@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -p zen4_0768_h100x4
-#SBATCH --qos zen4_0768_h100x4
+#SBATCH --qos idle_zen4_0768_h100x4
 #SBATCH --gres=gpu:4
 #SBATCH --time=06:00:00
 
@@ -37,9 +37,17 @@ if [ ! -f "$CONFIG" ]; then
 fi
 source "$CONFIG"
 
+# --- abnormal-termination notifier (preemption, node failure, walltime kill) ---
+RESULT="${RESULT:-}"
+_notify_abnormal(){ if [ -z "${RESULT:-}" ] || [ "${RESULT:-}" = "" ]; then
+  curl -s -H "Title: MUSICA guide: ABORTED" -d "ABORTED (no result): ${SERVED_NAME:-job} slurm=${SLURM_JOB_ID:-?} — preempted/killed/node-fail" ntfy.sh/ruggsea-vsc >/dev/null 2>&1 || true
+fi; }
+trap _notify_abnormal EXIT
+
+
 # ── Common environment ───────────────────────────────────────
-export HF_HOME=/data/fs201045/rl41113/hf-cache
-export TRANSFORMERS_CACHE=/data/fs201045/rl41113/hf-cache
+export HF_HOME=${GUIDE_HF_HOME:-/data/fs201045/rl41113/hf-cache}
+export TRANSFORMERS_CACHE=${GUIDE_HF_HOME:-/data/fs201045/rl41113/hf-cache}
 export VLLM_CACHE_ROOT=/data/fs201045/rl41113/vllm-cache
 export UV_LINK_MODE=copy
 export VLLM_ENGINE_READY_TIMEOUT_S=1800
@@ -48,6 +56,7 @@ export VLLM_ENGINE_READY_TIMEOUT_S=1800
 export CUDA_HOME=/data/fs201045/rl41113/cuda-nvcc-env
 export PATH=$CUDA_HOME/bin:$PATH
 export LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib/stubs:${LIBRARY_PATH:-}
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}
 
 # Allow config to override VENV (e.g. vLLM 0.17.0 for Qwen3.5/GLM-5)
 if [ -n "${VENV:-}" ]; then
@@ -126,9 +135,9 @@ if [ "$MODE" = "pp" ]; then
     srun -J "ray-head" -N 1 -n 1 -w ${HEAD_NODE} --gpus-per-task=4 \
       bash -c "
         source $VENV
-        export HF_HOME=/data/fs201045/rl41113/hf-cache
+        export HF_HOME=${GUIDE_HF_HOME:-/data/fs201045/rl41113/hf-cache}
         echo \"[Ray-head \$(hostname)] CUDA_VISIBLE_DEVICES=\${CUDA_VISIBLE_DEVICES:-unset}, nvidia-smi GPUs: \$(nvidia-smi -L 2>/dev/null | wc -l)\"
-        ray start --block --head --port=${RAY_PORT} --num-gpus=4 --node-ip-address=${HEAD_IP}
+        ulimit -n 65536; ray start --block --head --port=${RAY_PORT} --num-gpus=4 --node-ip-address=${HEAD_IP}
       " &
     sleep 15
 
@@ -139,9 +148,9 @@ if [ "$MODE" = "pp" ]; then
         srun -J "ray-worker" -N 1 -n 1 -w ${WORKER} --gpus-per-task=4 \
           bash -c "
             source $VENV
-            export HF_HOME=/data/fs201045/rl41113/hf-cache
+            export HF_HOME=${GUIDE_HF_HOME:-/data/fs201045/rl41113/hf-cache}
             echo \"[Ray-worker \$(hostname)] CUDA_VISIBLE_DEVICES=\${CUDA_VISIBLE_DEVICES:-unset}, nvidia-smi GPUs: \$(nvidia-smi -L 2>/dev/null | wc -l)\"
-            ray start --block --address=${HEAD_IP}:${RAY_PORT} --num-gpus=4 --node-ip-address=${WORKER_IP}
+            ulimit -n 65536; ray start --block --address=${HEAD_IP}:${RAY_PORT} --num-gpus=4 --node-ip-address=${WORKER_IP}
           " &
     done
     sleep 25
@@ -185,7 +194,8 @@ elif [ "$MODE" = "dpep" ]; then
     DEEPGEMM_EXPORTS="
         export CUDA_HOME=/data/fs201045/rl41113/cuda-nvcc-env
         export PATH=\$CUDA_HOME/bin:\$PATH
-        export LIBRARY_PATH=\$CUDA_HOME/targets/x86_64-linux/lib/stubs:\${LIBRARY_PATH:-}"
+        export LIBRARY_PATH=\$CUDA_HOME/targets/x86_64-linux/lib/stubs:\${LIBRARY_PATH:-}
+        export LD_LIBRARY_PATH=\$CUDA_HOME/lib64:\${LD_LIBRARY_PATH:-}"
 
     # Launch headless workers
     RANK=0
@@ -198,7 +208,7 @@ elif [ "$MODE" = "dpep" ]; then
         srun -N 1 -n 1 -w ${NODE} --gpus-per-task=4 \
           bash -c "
             source $VENV
-            export HF_HOME=/data/fs201045/rl41113/hf-cache
+            export HF_HOME=${GUIDE_HF_HOME:-/data/fs201045/rl41113/hf-cache}
             export VLLM_CACHE_ROOT=/data/fs201045/rl41113/vllm-cache
             export VLLM_ENGINE_READY_TIMEOUT_S=1800
             ${DEEPGEMM_EXPORTS}
@@ -213,7 +223,7 @@ elif [ "$MODE" = "dpep" ]; then
                 --data-parallel-address ${HEAD_IP} \
                 --data-parallel-rpc-port $RPC_PORT \
                 --enable-expert-parallel \
-                --download-dir /data/fs201045/rl41113/hf-cache \
+                --download-dir ${GUIDE_HF_HOME:-/data/fs201045/rl41113/hf-cache} \
                 --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS:-4096} \
                 --max-num-seqs ${MAX_NUM_SEQS:-16} \
                 --max-model-len $MAX_MODEL_LEN \
@@ -229,7 +239,7 @@ elif [ "$MODE" = "dpep" ]; then
     srun -N 1 -n 1 -w ${HEAD_NODE} --gpus-per-task=4 \
       bash -c "
         source $VENV
-        export HF_HOME=/data/fs201045/rl41113/hf-cache
+        export HF_HOME=${GUIDE_HF_HOME:-/data/fs201045/rl41113/hf-cache}
         export VLLM_CACHE_ROOT=/data/fs201045/rl41113/vllm-cache
         export VLLM_ENGINE_READY_TIMEOUT_S=1800
         ${DEEPGEMM_EXPORTS}
@@ -244,7 +254,7 @@ elif [ "$MODE" = "dpep" ]; then
             --data-parallel-address ${HEAD_IP} \
             --data-parallel-rpc-port $RPC_PORT \
             --enable-expert-parallel \
-            --download-dir /data/fs201045/rl41113/hf-cache \
+            --download-dir ${GUIDE_HF_HOME:-/data/fs201045/rl41113/hf-cache} \
             --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS:-4096} \
             --max-num-seqs ${MAX_NUM_SEQS:-16} \
             --max-model-len $MAX_MODEL_LEN \
@@ -266,7 +276,7 @@ echo ""
 echo "[$(date +%H:%M:%S)] Waiting for server (PID $SERVER_PID)..."
 
 ready=0
-for i in $(seq 1 360); do
+for i in $(seq 1 ${WAIT_CHECKS:-360}); do
     sleep 10
     if [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:${PORT}/health 2>/dev/null)" = "200" ]; then
         ready=1
@@ -283,6 +293,8 @@ done
 
 RESULT="FAIL"
 LOAD_TIME="--"
+TTFT_MS="--"
+DECODE_TPS="--"
 
 if [ $ready -eq 1 ]; then
     LOAD_TIME=$(($(date +%s) - t0))
@@ -298,6 +310,16 @@ if [ $ready -eq 1 ]; then
         output=$(echo "$response" | python3 -c 'import sys,json; print(json.load(sys.stdin)["choices"][0]["text"][:200])' 2>/dev/null || echo "$response" | head -c 300)
         echo "[$(date +%H:%M:%S)] Generation successful!"
         echo "  Output: $output"
+        echo "[$(date +%H:%M:%S)] Measuring single-stream perf (TTFT + decode tok/s)..."
+        perf=$(python3 "${GUIDE_DIR:-$HOME/musica-llm-guide}/scripts/measure_perf.py" \
+                 "http://localhost:${PORT}" "$SERVED_NAME" 128 2>&1) || true
+        if echo "$perf" | grep -q '^TTFT_MS='; then
+            eval "$(echo "$perf" | grep '^TTFT_MS=')"
+            echo "  $perf"
+        else
+            echo "  perf measurement failed (PASS verdict unaffected):"
+            echo "$perf" | tail -5
+        fi
     else
         echo "Generation failed: $(echo "$response" | head -c 500)"
     fi
@@ -314,6 +336,8 @@ echo "RESULT: $RESULT"
 echo "  Model:     $MODEL_ID"
 echo "  Mode:      $MODE (nodes=$NODES)"
 echo "  Load time: ${LOAD_TIME}s"
+echo "  TTFT:      ${TTFT_MS}ms (single stream)"
+echo "  Decode:    ${DECODE_TPS} tok/s (single stream)"
 echo "  Config:    $CONFIG"
 echo "============================================================"
 echo ">>> ${RESULT}: ${MODEL_ID}"
@@ -322,9 +346,9 @@ echo "Finished at $(date)"
 # ── Send notification ────────────────────────────────────────
 MSG="${RESULT}: ${SERVED_NAME} (${NODES}N ${MODE})"
 if [ "$RESULT" = "PASS" ]; then
-    MSG="${MSG} - loaded in ${LOAD_TIME}s"
+    MSG="${MSG} - loaded in ${LOAD_TIME}s, TTFT ${TTFT_MS}ms, ${DECODE_TPS} tok/s"
 fi
-curl -s -d "$MSG" ntfy.sh/ruggsea-vsc >/dev/null 2>&1 || true
+curl -s -H "Title: MUSICA guide: ${RESULT}" -d "$MSG" ntfy.sh/ruggsea-vsc >/dev/null 2>&1 || true
 
 # ── Cleanup or stay alive ─────────────────────────────────────
 if [ "${KEEP_ALIVE:-0}" = "1" ] && [ "$RESULT" = "PASS" ]; then
