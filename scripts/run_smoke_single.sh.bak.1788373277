@@ -10,7 +10,6 @@
 #          scripts/run_smoke_single.sh configs/single2026/<model>.conf
 set -uo pipefail
 CONFIG="${1:?usage: run_smoke_single.sh <conf>}"
-source ~/musica-env.sh   # standard env, identical at vie/inn/lnz; before the config so it can use $MUSICA_ROOT
 source "$CONFIG"
 
 # --- abnormal-termination notifier (preemption, node failure, walltime kill) ---
@@ -21,15 +20,19 @@ fi; }
 trap _notify_abnormal EXIT
 
 
+export HF_HOME=${GUIDE_HF_HOME:-/data/fs201045/rl41113/hf-cache}
 export TRANSFORMERS_CACHE=$HF_HOME
 export HF_HUB_DISABLE_XET=1
+export VLLM_CACHE_ROOT=/data/fs201045/rl41113/vllm-cache
+export XDG_CACHE_HOME=/data/fs201045/rl41113/xdg-cache
 mkdir -p $XDG_CACHE_HOME
 export VLLM_ENGINE_READY_TIMEOUT_S=1800
+export CUDA_HOME=/data/fs201045/rl41113/cuda-nvcc-env
 export PATH=$CUDA_HOME/bin:$PATH
 export LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib/stubs:${LIBRARY_PATH:-}
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}
 [ "${NEEDS_DEEPGEMM:-false}" = "true" ] && export VLLM_USE_DEEP_GEMM=1
-source "${VENV:-$MUSICA_VENV}/bin/activate"
+source "${VENV:-/data/fs201045/rl41113/vllm-venv}/bin/activate"
 
 TRUST_FLAG=""
 [ "${TRUST_REMOTE_CODE:-false}" = "true" ] && TRUST_FLAG="--trust-remote-code"
@@ -56,7 +59,7 @@ for i in $(seq 1 300); do
   [ $((i % 6)) -eq 0 ] && echo "  ... waiting ($((i*10))s)"
 done
 
-RESULT="FAIL"; LOAD_TIME="--"; TTFT_MS="--"; DECODE_TPS="--"
+RESULT="FAIL"; LOAD_TIME="--"
 if [ $ready -eq 1 ]; then
   LOAD_TIME=$(($(date +%s) - t0))
   echo "ready after ${LOAD_TIME}s"
@@ -64,21 +67,12 @@ if [ $ready -eq 1 ]; then
     -d '{"model":"'"$SERVED_NAME"'","prompt":"The capital of Austria is","max_tokens":24,"temperature":0.2}' 2>&1) || true
   echo "raw: $(echo "$response" | head -c 400)"
   echo "$response" | grep -q '"choices"' && RESULT="PASS"
-  if [ "$RESULT" = "PASS" ]; then
-    perf=$(python3 "${GUIDE_DIR:-$HOME/musica-llm-guide}/scripts/measure_perf.py" \
-             "http://localhost:$PORT" "$SERVED_NAME" 128 2>&1) || true
-    if echo "$perf" | grep -q '^TTFT_MS='; then
-      eval "$(echo "$perf" | grep '^TTFT_MS=')"; echo "perf: $perf"
-    else
-      echo "perf measurement failed (PASS verdict unaffected):"; echo "$perf" | tail -5
-    fi
-  fi
   echo "--- nvidia-smi ---"
   nvidia-smi --query-gpu=index,memory.used --format=csv,noheader
 fi
 echo "============================================"
-echo "RESULT: $RESULT | Load time: ${LOAD_TIME}s | TTFT: ${TTFT_MS}ms | Decode: ${DECODE_TPS} tok/s | Config: $CONFIG"
+echo "RESULT: $RESULT | Load time: ${LOAD_TIME}s | Config: $CONFIG"
 echo ">>> ${RESULT}: ${MODEL_ID}"
-curl -s -H "Title: MUSICA guide: ${RESULT}" -d "${RESULT}: ${SERVED_NAME} (1N smoke, load ${LOAD_TIME}s, TTFT ${TTFT_MS}ms, ${DECODE_TPS} tok/s)" ntfy.sh/ruggsea-vsc >/dev/null 2>&1 || true
+curl -s -H "Title: MUSICA guide: ${RESULT}" -d "${RESULT}: ${SERVED_NAME} (1N smoke, load ${LOAD_TIME}s)" ntfy.sh/ruggsea-vsc >/dev/null 2>&1 || true
 kill $SERVER_PID 2>/dev/null; wait 2>/dev/null
 [ "$RESULT" = "PASS" ]

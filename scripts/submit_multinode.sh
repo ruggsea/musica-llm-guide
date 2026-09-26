@@ -19,6 +19,7 @@ if [ ! -f "$CONFIG" ]; then
     exit 1
 fi
 
+source ~/musica-env.sh   # configs use $MUSICA_ROOT
 source "$CONFIG"
 
 # Ensure log directory exists
