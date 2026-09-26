@@ -1006,6 +1006,15 @@ HF cache:    /data/fs201045/rl41113/hf-cache
 | DeepSeek-V3.2-Exp | **PASS** | 3 | DP+EP | FP8 | **70-73 GiB** | 671B MoE, Arena ELO 1423 (#39). 340s load, needs DeepGEMM + FlashInfer |
 | Kimi-K2-Thinking | **PASS** | 4 | DP+EP | INT4 QAT | **55.27 GiB** | 1T MoE (1032B), ships native INT4 (compressed-tensors), Arena ELO 1430 (#34). 341s load, 17.4 GiB KV cache |
 | Qwen3-Coder-480B-FP8 | **PASS** | 2 | PP | FP8 | ~50 GiB | 480B MoE (35B active), Apache 2.0, Arena ELO ~1404. 721s load |
+| MiniMax-M3-MXFP8 | **PASS** | 2 | DP+EP | MXFP8 | -- | 428B MoE (23B active, 128 experts), MSA sparse attn, minimax-community lic. vLLM 0.25, block-size 128 mandatory, 581s load |
+| Nemotron-3-Ultra-550B-FP8 | **PASS** | 3 | TP=4 PP=3 | FP8 | **~30 GiB** | 550B-A55B hybrid Mamba latent-MoE. --enforce-eager fixed the FULL-cudagraph crash (job 1562417): 531s load, 44 GiB/GPU weights, 29.8 GiB KV, 14.7M-tok cache, 900x concurrency |
+| Kimi-K2.7-Code | **PASS** | 4N DP+EP (DP=16) | INT4 | 351 | -- | vllm-017-venv (same K2.x-proven path as K2.6); 0.25.1 KV-OOMs this family. blobfile, --enforce-eager |
+| Kimi-K2.6 | **PASS** | 4N DP+EP (DP=16) | INT4 | 421 | -- | On vllm-017-venv (K2.5-proven path); vLLM 0.25.1 OOMs the KV cache at 4N and 6N (DP+EP all2all + Marlin INT4 workspace) — use 0.17 for K2.x; blobfile; --enforce-eager |
+| Inkling-NVFP4 | **FAIL-FINAL** (vLLM+Ray on Hopper) | 2N (TP8 / TP4+PP2 / DP+EP all tried) | NVFP4→MARLIN | -- | -- | 5 attempts: (a) DP+EP OOMs — DP does not shard the 975B backbone; (b) TP4+PP2 Ray → ActorHandleNotFoundError (engine-core re-inits Ray as a new job), persists with VLLM_ENABLE_V1_MULTIPROCESSING=0; (c) TP8 cross-node 2h window → same Ray actor error, never served. --kernel-config.moe_backend=marlin IS required and works (else NVFP4 experts build unquantized BF16 → OOM). Blocked on nightly-vLLM/Ray integration, not on hardware. Revisit after a vLLM release pins Ray compat |
+| Kimi-K3 | **PASS** | 8 | TP=4 (in-node) + PP=8 (across) | MXFP4->MARLIN | ~85 GiB | moonshotai/Kimi-K3, 2.8T/896-exp KDA model, 1.56 TB weights on /data, nightly 0.26.1rc1 (KimiK3ForConditionalGeneration). **PASS job 1685547: 769 s load, KV cache 2.62M tok, --enforce-eager.** Supersedes the earlier 8N DP+EP OOM (job 1683713, CUDA OOM at 91 GiB inside mxfp4.py create_weights): pure DP replicates the KDA/attention backbone on every rank; TP=4 in-node + PP=8 across nodes shards it. Full entry in the July-2026 table |
+| GLM-5.3-Flash | **BLOCKED** (upstream vLLM) | 2 | DP+EP | FP8 | ~41 GiB (est) | zai-org/GLM-5.3-Flash (released 2026-08-25), 320B/18B multimodal MoE, 288 exp, hybrid KDA+DSA, 328 GB FP8, MIT. Arch Glm5NextForConditionalGeneration / glm5_next: not in 0.17/0.25.1/nightly-0826 nor vLLM main; recipe says vLLM 0.27.0+ or docker until integration is public. Conf glm53_flash.conf ready (2N DP8/EP8, enforce-eager, scratch cache); submit once a nightly carries glm5_next Rechecked 08-26 18:45: not in vLLM main nor v0.28.0 (released 08-26). |
+| DeepSeek-V4-Pro | **RE-OPENED** (retry not yet run) | 4 | TP=4 + PP=4 | FP4+FP8 | 54.0 GiB (calc) | 1542746 4N/DP16 CUDA OOM at KV alloc (~9 GiB/GPU short); 6N also OOM under vLLM 0.25. **Root-caused 2026-08-31: the OOM was self-inflicted -- DP=16 replicated ~29 GiB of dense backbone 16x.** Correct shape is TP=4 (GPUs per node) + PP=4 (nodes), sharding the backbone to ~1.8 GiB/GPU -> 54.0 GiB weights, ~21 GiB KV. Use `deepseek-ai/DeepSeek-V4-Pro-0813` (892.8 GB), NOT `sgl-project/DeepSeek-V4-Pro-FP8` (1606.5 GB > 1504 GB total 4N VRAM) -- the "needs 8 nodes / SGLang TP=32" belief was a property of the FP8 checkpoint, not of the model. vLLM has served `deepseek_v4` on Hopper since 0.20.0 via Marlin W4A16; the arch_major==10 assert lives only in the Blackwell-gated `--moe-backend deep_gemm_mega_moe`. Needs a vLLM >=0.27 venv; pin `--max-num-batched-tokens 8192`. **Arithmetic only -- not yet tested on hardware** |
+| MiMo-V2.5 (1N) | **RE-OPENED** (patch staged, retry not yet run) | 1 | TP=4 | FP8 | -- | Reproducible WorkerProc-init crash on vLLM 0.21/0.25.1/nightly. **Root-caused 2026-08-31: vLLM mis-shards the FP8 block-scales of the *fused* QKV in the *sliding-window* layers.** The checkpoint stores one block grid over the whole fused tensor (per KV group q 8*192 + k 192 + v 128 = 1856 rows; 8 groups = 14848 / 128 = 116 scale rows), but `_shard_fp8_qkv_proj` assumes per-KV-stripe scales (116//8 = 14 -> 14*128 = 1792) -> RuntimeError "size of tensor a (1856) must match tensor b (1792)". Open PR vllm#53242 fixes it in 6 lines (absent from main and 0.28.0); patcher staged on artemis at `~/musica-guide-loop/patch_mimo_53242.sh` (idempotent, --revert). Then TP=4 on ONE node -- TP>4 trips `assert tp_size <= num_kv_heads` because the 9 full-attention layers have only 4 KV heads. The old 0.21 meta-tensor error was simply that `_shard_fp8_qkv_proj` did not exist before 0.24.0. **WARNING: MiMo-V2.5-Pro is the inverse trap** -- Pro's scales [216,48] are genuinely per-stripe padded (216 = 27*8), so the UNPATCHED code is correct for Pro and this patch would SILENTLY mis-load Pro at TP=4 (no crash, wrong weights). **Not yet tested on hardware** |
 
 #### Gap Frontier 1-Node -- Config: `gap_frontier.conf`, 4 GPUs TP=4
 
@@ -1058,3 +1067,118 @@ HF cache:    /data/fs201045/rl41113/hf-cache
 | `--tokenizer-mode/config-format/load-format mistral` | Mistral-Large-3-675B (native Mistral format, not safetensors) |
 | `pip install timm` | gemma-3n-E2B-it, gemma-3n-E4B-it (multimodal) |
 | `pip install blobfile` | Kimi-K2 (tiktoken dependency) |
+
+---
+
+## 11. July 2026 Backfill — New Arena Open-Weights Models
+
+> Added 2026-07-17. Covers everything released Feb–Jul 2026 that reached the LMArena
+> open-weights top tier. Research: per-model deep-dive briefs (vLLM recipes, config.json,
+> GitHub issues); tests on MUSICA 4x H100 94GB nodes.
+> **New venvs**: `/data/fs201045/rl41113/vllm-025-venv` (vLLM 0.25.1, transformers 5.x) covers
+> every new arch except Inkling; `/data/fs201045/rl41113/vllm-nightly-venv` (nightly >= Jul 16,
+> commit f61163e / PR #48858 Hopper fix) needed for Inkling. The old 0.15.1/0.17.0 venvs load
+> NONE of these models.
+> **Test weights live on SCRATCH**: `GUIDE_HF_HOME=/scratch/fs201276/rl41113/hf-cache-guide`
+> (configs pass it through; `run_multinode.sh` now honors `GUIDE_HF_HOME`).
+
+### The recurring theme: 4-bit checkpoints on Hopper
+
+Many 2026 flagships ship FP4/NVFP4/MXFP4 checkpoints tuned for Blackwell. **H100 (sm_90) has
+no FP4 tensor cores** — vLLM runs these via Marlin/W4A16 dequant: you keep the ~4-bit MEMORY
+footprint but compute in BF16, so expect FP8-class-or-worse throughput, never the Blackwell
+speedups. This is fine for our serving (memory is the binding constraint), just don't quote
+vendor tok/s numbers.
+
+### Arena ELO snapshot (open-weights, Jul 2026)
+
+| Arena rank | Model | ELO | License | Status here |
+|---|---|---|---|---|
+| #8 | Gemma-4-31B-it | 1451 | Apache 2.0 | testing |
+| #12 | Qwen3.5-397B-A17B | 1442 | Apache 2.0 | PASS (documented above, Feb round) |
+| #13 | Inkling (Thinking Machines) | 1441 | Apache 2.0 | testing |
+| #16 | DeepSeek-V4-Flash | 1438 | MIT | testing |
+| #17 | MiMo-V2.5 | 1432 | MIT | FAIL (vllm incompat; use V2-Flash) |
+| #25 | Qwen3-235B-A22B-2507 | 1423 | Apache 2.0 | PASS (Feb round) |
+| #33 | Qwen3.5-122B-A10B | 1417 | Apache 2.0 | testing |
+| #41 | Qwen3.5-27B | 1409 | Apache 2.0 | testing |
+| — | DeepSeek-V4-Pro | frontier-adjacent | MIT | SGLang path proven (below) |
+| — | GLM-5.2 | — | MIT | **PASS 3N DP+EP (Jun 19)** |
+| — | Kimi K2.6 / K2.7-Code / K3 | — | Modified MIT | K2.6/K2.7 testing; K3 weights ~Jul 27 |
+| — | Nemotron-3 Super/Ultra | — | NVIDIA Open | testing |
+| — | MiniMax-M3 / M2.7 | — | minimax-community | testing |
+| #3 open | GLM-5.3-Flash | 1469 | MIT | FAIL (`glm5_next` arch unsupported by transformers/vLLM nightly Aug-26) |
+| #4 open | MiMo-V2.5-Pro | 1468 | MIT | FAIL 4N DP16 (job 1691834: FlashInfer fused_moe_90 JIT race — infra; weights loaded OK, base-V2.5 shape bug NOT reproduced) → 6N DP24 retry after precompile |
+| #5 open | GLM-5.1-FP8 | 1466 | MIT | FAIL 3N + 4N/mnbt4096 (OOM in profile_run); 4N mnbt2048 (job 1691815) cleared the profile alloc but died on FlashInfer fused_moe_90 JIT race → resubmit after precompile |
+| — | gemma-4-26B-A4B-it | 1438 | Apache 2.0 | **PASS 1N TP=2 (Aug 28)** |
+| — | Qwen3.8-27B | 1436 | Apache 2.0 | **PASS 1N TP=2 (Aug 28)** |
+| — | glm-5.3-max / Tencent hy3 | — | — | API-only, no open weights on HF — not deployable |
+
+### New model reference table
+
+| Model | HF ID | Total/Active | Ships | H100 serving | Nodes | Min vLLM |
+|---|---|---|---|---|---|---|
+| **Gemma-4-31B-it** | `google/gemma-4-31B-it` | 30.7B dense | BF16 | BF16 TP=2 (TP=1 fits, bandwidth-bound) | 1 | 0.21 (transformers>=5.5) |
+| **Qwen3.5-27B** | `Qwen/Qwen3.5-27B` | 27.8B dense GDN-hybrid | BF16 (+FP8 repo) | BF16 TP=1 | 1 | 0.17 |
+| **Qwen3.5-35B-A3B-Base** | `Qwen/Qwen3.5-35B-A3B-Base` | 35B/3B MoE | BF16 | TP=4 | 1 | 0.17 |
+| **Qwen3.5-122B-A10B** | `Qwen/Qwen3.5-122B-A10B` | 125B/10B MoE, 256 exp | BF16 (+FP8 repo) | BF16 TP=4 or FP8 TP=2 | 1 | 0.17 |
+| **DeepSeek-V4-Flash** | `deepseek-ai/DeepSeek-V4-Flash` | 284B/13B MoE, 256 exp | FP4 exp + FP8 dense | Marlin W4A16 (~168 GB), TP=4 | 1 | 0.20 |
+| **DeepSeek-V4-Pro** | `deepseek-ai/DeepSeek-V4-Pro` | 1.6T/49B MoE, 384 exp | FP4 exp + FP8 dense | see SGLang note | 4 (vLLM) / 8 (SGLang) | 0.20* |
+| **MiMo-V2.5** | `XiaomiMiMo/MiMo-V2.5` | 310B/15B MoE, 256 exp | FP8 | TP=4 (tight, ~74 GiB/GPU) | 1 | 0.21 |
+| **Nemotron-3-Super-120B** | `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8` | 120B/12B latent-MoE mamba-hybrid | BF16/FP8/NVFP4 | FP8 TP=4 | 1 | 0.17.1 |
+| **Nemotron-3-Ultra-550B** | `RedHatAI/NVIDIA-Nemotron-3-Ultra-550B-A55B-FP8-dynamic` | 550B/55B latent-MoE | BF16/NVFP4 (FP8 = community) | FP8 TP=8+EP (Ray) | 2-3 | 0.22 |
+| **MiniMax-M2.7** | `MiniMaxAI/MiniMax-M2.7` | 229B MoE | FP8 | TP=4 (same as M2.5) | 1 | 0.17 |
+| **MiniMax-M3** | `MiniMaxAI/MiniMax-M3-MXFP8` | 428B/23B MoE, 128 exp, MSA sparse | BF16 (+MXFP8/NVFP4) | MXFP8 DP+EP or TP4+PP2; `--block-size 128` MANDATORY | 2 | 0.24 |
+| **GLM-5.2** | `zai-org/GLM-5.2-FP8` | ~750B/40B MoE, 256 exp, DSA | BF16 + FP8 | FP8 DP+EP | 3 (tight) / 4 (clean EP) | 0.23 (0.17 worked in Jun test) |
+| **Inkling** | `thinkingmachines/Inkling-NVFP4` | 975B/41B MoE, 256 exp, hybrid SWA | BF16 (1.9TB) + NVFP4 (592GB) | NVFP4 W4A16, TP=8 (2N) | 2-3 | nightly >= f61163e |
+| **Kimi-K2.6** | `moonshotai/Kimi-K2.6` | 1.06T/32B MoE, 384 exp | INT4 QAT | DP=16/EP=16 | 4 | 0.25 |
+| **Kimi-K2.7-Code** | `moonshotai/Kimi-K2.7-Code` | 1.06T/32B MoE | INT4 QAT | DP=16/EP=16 (thinking always on) | 4 | 0.19.1 |
+| **Kimi-K3** | `moonshotai/Kimi-K3` (OUT since ~Jul 27) | 2.8T/~50B MoE, 896 exp, KDA linear-attn | MXFP4 QAT, 1561 GB / 96 shards | 8N DP+EP EP=32, Marlin dequant (memory-only win) | 8 | nightly (KimiK3ForConditionalGeneration in vLLM main) |
+
+### DeepSeek-V4-Pro on H100 — the SGLang note
+
+The raw V4-Pro FP4 checkpoint is Blackwell-first: the FP4 MoE GEMM asserts `arch_major==10`
+on Hopper, and vLLM 0.20/0.21 DP+EP crashed during KV-cache profiling (engine init fail, see
+`logs/multinode/deepseek-v4-pro_1183371.err`). The **negotiation-v4pro project serves it in
+production on this cluster via SGLang** (`~/negotiation-v4pro/bf16_claim.sbatch`):
+- FP8-converted checkpoint at `/data/fs201276/rl41113/v4pro-bf16` (raw FP4 → FP8; ~1.5 TB)
+- **Minimum 8 nodes (32 GPUs), TP=32**: FP8 weights OOM at load on 4 nodes; 6 nodes fails
+  vocab/TP divisibility (129280 % 24 != 0, no factor of 3); TP=32 → ~46 GB/GPU, comfortable
+- `--ep-size 32 --enable-dp-attention --dp-size 32 --moe-dense-tp-size 1` (dense/shared
+  experts replicated — avoids the moe_intermediate 3072 % 128 block-quant shard errors)
+- vLLM retry on 0.25.1 with FP4/Marlin 4N DP+EP: `configs/multinode/deepseek_v4_pro_vllm025.conf` (pending)
+
+### Kimi K3 (pre-release note, 2026-07-17)
+
+2.8T params, 896 experts (16 active, "Stable LatentMoE"), Kimi Delta Attention (linear —
+tiny KV even at 1M ctx) + Attention Residuals, MXFP4 QAT. Weights promised on HF ~Jul 27;
+vLLM support (KDA kernels are in since 0.23, but the `kimi_k3` arch + KDA prefix-caching
+patch) ships alongside the weights. On MUSICA: memory math says ~1.6 TB → 8 nodes EP=32
+(896 % 32 == 0) via MXFP4 Marlin dequant, i.e. deployable-but-slow; K3 realistically wants
+Blackwell. Revisit after weights drop — until then K2.7-Code is the flagship Kimi here.
+
+### Per-model test results (July 2026 round)
+
+| Model | Status | Nodes/Mode | Precision | Load (s) | Mem/GPU | Notes |
+|-------|--------|-----------|-----------|----------|---------|-------|
+| GLM-5.2-FP8 | **PASS** (Jun 19) | 3N DP+EP | FP8 | 320 | tight, gpu-util 0.95 | vllm-017-venv, `--enforce-eager`; conf `glm52_fp8.conf`; 0.23+ recommended now |
+| Gemma-4-31B-it | **PASS** | 1N TP=2 | BF16 | 240 | 29.3 GiB model / 53.3 GiB KV | vLLM 0.25.1, idle QoS; earlier TRITON_ATTN illegal-access no longer reproduces; clean (job 1543593) |
+| Qwen3.5-27B | **PASS** | 1N TP=1 | BF16 | 230 | 85.2 GiB | vLLM 0.25.1, /data cache, idle QoS; clean |
+| Qwen3.5-122B-A10B | **PASS** | 1N TP=4 | BF16 | 740 | ~72 GiB | GDN hybrid; **needs --enforce-eager** (FULL cudagraph capture crashes at TP=4) |
+| Qwen3.5-35B-A3B-Base | **PASS** | 1N TP=4 | BF16 | 421 | 16.5 GiB model / 58.4 GiB KV | vLLM 0.25.1, idle QoS; earlier illegal-access no longer reproduces; clean (job 1543594) |
+| DeepSeek-V4-Flash | **PASS** | 1N TP=4 | FP4→W4A16 | 801 | 88.2 GiB | Marlin dequant on H100; kv fp8, block 256, tokenizer-mode deepseek_v4 |
+| MiMo-V2.5 | **FAIL (known incompat)** | 1N TP=4 | FP8 | -- | -- | Root cause (director, 3 venvs tested): vLLM mimo_v2 impl vs V2.5 ckpt — shape mismatch 1856vs1792 at load (0.25.1 + nightly-Jul26), meta-tensor storage err (0.21.1rc1). En-route fixes to keep: uninstall torchcodec (FFmpeg dep), HF_HUB_DISABLE_XET=1. V2-Flash WORKS — use it until upstream fixes V2.5 |
+| Nemotron-3-Super-FP8 | **PASS** | 1N TP=4 | FP8 | 741 | ~30 GiB | nemotron_h mamba-hybrid; **needs --enforce-eager**; kv fp8 |
+| MiniMax-M2.7 | **PASS** | 1N TP=4 | FP8 | 901 | ~54 GiB | FP8 MoE; **needs --enforce-eager**; --trust-remote-code |
+| MiniMax-M3-MXFP8 | **PASS** | 2N DP+EP | MXFP8 | 581 | ~55 GiB | --block-size 128 mandatory; --enforce-eager; MSA sparse attn (NB: hung on H200/GSC1 same version — works on H100 multinode) |
+| Nemotron-3-Ultra-FP8 | **PASS** | 3N TP=4 PP=3 | FP8-dynamic | 531 | ~30 GiB | 5th try (job 1562417): --enforce-eager cleared the mamba-hybrid+MoE FULL-cudagraph illegal-access crash. 44 GiB/GPU weights, 29.8 GiB KV cache, 14.7M-tok GPU KV, 900x concurrency; kv fp8, ray backend, EP on |
+| Inkling-NVFP4 | **FAIL-FINAL** (vLLM+Ray on Hopper) | 2N (TP8 / TP4+PP2 / DP+EP all tried) | NVFP4→MARLIN | -- | -- | 5 attempts: (a) DP+EP OOMs — DP does not shard the 975B backbone; (b) TP4+PP2 Ray → ActorHandleNotFoundError (engine-core re-inits Ray as a new job), persists with VLLM_ENABLE_V1_MULTIPROCESSING=0; (c) TP8 cross-node 2h window → same Ray actor error, never served. --kernel-config.moe_backend=marlin IS required and works (else NVFP4 experts build unquantized BF16 → OOM). Blocked on nightly-vLLM/Ray integration, not on hardware. Revisit after a vLLM release pins Ray compat |
+| Kimi-K2.6 | **PASS** | 4N DP+EP (DP=16) | INT4 | 421 | -- | On vllm-017-venv (K2.5-proven path); vLLM 0.25.1 OOMs the KV cache at 4N and 6N (DP+EP all2all + Marlin INT4 workspace) — use 0.17 for K2.x; blobfile; --enforce-eager |
+| Kimi-K2.7-Code | **PASS** | 4N DP+EP (DP=16) | INT4 | 351 | -- | vllm-017-venv (same K2.x-proven path as K2.6); 0.25.1 KV-OOMs this family. blobfile, --enforce-eager |
+| Kimi-K3 | **PASS** | 8N TP=4 PP=8 (Ray) | MXFP4→MARLIN | 769 | ~85 GiB | 2.8T/896-exp KDA model on 32x H100. **DP+EP fails** (pure DP replicates the KDA/attn backbone per rank → OOM in mxfp4 create_weights); TP4-in-node + PP8 across nodes shards it. --enforce-eager, nightly vLLM (KimiK3ForConditionalGeneration). KV cache 2.62M tokens |
+| DeepSeek-V4-Pro (vLLM) | **FAIL (use SGLang)** | 4N DP+EP | FP4→W4A16 | -- | -- | 0.21: crash in KV profiling; 0.25.1: CUDA OOM at KV alloc (~9 GiB/GPU short at 4N). **Proven path: SGLang 8N TP=32 (see note above)**. Closed by director to free 806G for K3 |
+| Qwen3.8-27B | **PASS** | 1N TP=2 | BF16 | 371 | 25.7 GiB model / 56.3 GiB KV | vllm-nightly-venv, --enforce-eager, idle QoS; GPU KV 1.43M tok; clean (job 1690409) |
+| gemma-4-26B-A4B-it | **PASS** | 1N TP=2 | BF16 | 290 | 24.0 GiB model / 58.5 GiB KV | vllm-025-venv, --enforce-eager --language-model-only; GPU KV 924k tok; clean (job 1690413) |
+| GLM-5.3-Flash | **FAIL (arch unsupported upstream)** | 2N DP+EP | FP8 | -- | -- | model_type `glm5_next` unknown to transformers + vLLM nightly (0.26.1rc1.dev1212, Aug-26): ModelConfig ValidationError at startup, 59s (job 1690420). Not a config problem — wait for upstream `glm5_next` registry support, then retry 2N DP+EP |
+| GLM-5.1-FP8 | **FAIL ×3 (2 OOM, 1 JIT race) → resubmit 4N mnbt 2048 after fused_moe_90 precompile** | 4N DP+EP (DP16/EP16) | FP8 | -- | -- | job 1690454 (3N DP12, mnbt 8192): weights 77–80 GiB/GPU then CUDA OOM in profile_run (asks 21.1 GB, 11.6 free). Job 1691737 (4N DP16, mnbt 4096, nightly): weights 64.3 GiB/GPU in 155–180s, then same OOM in profile_run MoE dummy run (asks 14.07 GB, 13.06 free), 32 min. The profile allocation scales with DP_SIZE×max-num-batched-tokens (98k→21.1 GB, 65k→14.07 GB) — naive all-gather MoE dispatch. 5N impossible (256 exp % 20 ≠ 0). Retry: 4N DP16 + mnbt 2048 (~7 GB; smoke-only setting — smoke is a 5-tok prompt/32-tok completion, so it caps prefill chunk not correctness; for production throughput use 8N DP32 or DeepEP low-latency dispatch); fallback 8N DP32 Job 1691815 (4N DP16, mnbt 2048, nightly): weights 64.3 GiB/GPU in 178 s, profile_run allocation OK this time, then all 16 workers JIT-compiled FlashInfer `fused_moe_90` (183 nvcc targets) concurrently in the NFS `$HOME/.cache/flashinfer/0.6.17` dir (concurrently with the MiMo-Pro job's 16 workers too) → ninja race (`premature end of file` / `opening build log: No such file`) — infra, not the model. Fix: precompile once single-process (`scripts/precompile_flashinfer.sh` recipe, path 0.6.17 + nightly venv), `chmod a-w` the .o/.so, then resubmit; never run two JIT-cold DP+EP jobs at once. |
+| MiMo-V2.5-Pro | **FAIL (JIT race) → retry 6N DP24 after precompile** | 4N DP+EP (DP16/EP16) → 6N DP24/EP24 | FP8 | -- | 86.96 GiB model/GPU @DP16 | job 1691834 (nightly Aug-26, --enforce-eager, 1033 GB ckpt): weights loaded in 304 s at 86.96 GiB/GPU — the base MiMo-V2.5 ckpt shape mismatch (1856 vs 1792) does **NOT** reproduce for Pro on this nightly. Died at `determine_available_memory` on the same FlashInfer `fused_moe_90` ninja race as GLM-5.1 (both 16-worker jobs compiling in the same $HOME cache). Note 86.96 GiB weights already exceed the 0.90×94 GB budget at DP16 (≈31 GB dense replicated per rank + 1/16 of experts), so 4N cannot fit even after precompile → 6N DP24/EP24 (384 % 24 = 0; est. ≈68 GiB/GPU), mnbt 2048. |
