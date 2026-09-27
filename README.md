@@ -234,6 +234,7 @@ This is where most of the pain was. FP8 MoE models (DeepSeek, Kimi, MiniMax, Mis
 - **`--gpus-per-task=4`** not `--gres=gpu:4` in nested srun. The partition plugin overrides gres
 - **ZMQ port collision in DP+EP** happens ~1/3 of the time. Just resubmit
 - **Monitor disk**: the HF cache grows fast. `du -sh /data/.../hf-cache/hub/models--*/` to find the big ones
+- **Qwen3.5 (9B seen) can stall at 100% GPU with no progress** (persona-sweep, Linz, vLLM 0.25.1 standard venv, 2026-09-27). Symptom: card at 100% utilisation, no output, stack trace inside Qwen3.5 linear-attention (GDN) layer. It depends on batch shape: in job 135527 a 1,000-post step ran 8.5 min and saved nothing while 2,000- and 2,500-post steps finished in under a minute. About 1 in 3 steps across 7 jobs, on two different nodes, so not a node fault. Workaround in use: per-step timeout (10 min) and up to 4 retries resuming from what was already scored. Candidate fix, untested: pin the batch shape and pad the last partial batch. Only measured on 0.25.1 at Linz; vllm-nightly and the 0.17 venv are unmeasured, and Vienna/Innsbruck unmeasured.
 - **SSH tunnel for API**: `ssh -NL 8000:<node>:8000 user@musica.vsc.ac.at`
 
 ## Scripts
