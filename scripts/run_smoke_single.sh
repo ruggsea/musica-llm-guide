@@ -30,6 +30,8 @@ export LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib/stubs:${LIBRARY_PATH:-}
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}
 [ "${NEEDS_DEEPGEMM:-false}" = "true" ] && export VLLM_USE_DEEP_GEMM=1
 source "${VENV:-$MUSICA_VENV}/bin/activate"
+# Job-local source fix (e.g. overlays/mimo53242), never a patch to the shared venv
+[ -n "${PY_OVERLAY:-}" ] && export PYTHONPATH=$PY_OVERLAY:${PYTHONPATH:-} && echo "PY_OVERLAY: $PY_OVERLAY"
 
 TRUST_FLAG=""
 [ "${TRUST_REMOTE_CODE:-false}" = "true" ] && TRUST_FLAG="--trust-remote-code"
