@@ -63,6 +63,19 @@ VENV="${VENV:-$MUSICA_VENV}/bin/activate"
 source "$VENV"
 echo "Site:    ${MUSICA_SITE}  venv: ${VENV%/bin/activate}  HF_HOME: $HF_HOME"
 
+# ── Compiled-kernel check (compiles nothing) ─────────────────
+# A FlashInfer kernel that ninja sees as stale gets rebuilt by EVERY rank at once in the same dir
+# (the Aug 2026 fused_moe_90 race). Abort instead of letting the ranks race.
+FI_VER=$(python -c 'import flashinfer; print(flashinfer.__version__)' 2>/dev/null)
+STALE=$(~/musica-setup/fi-cache-check.sh 2>&1 | grep "^STALE" | grep " ${FI_VER}/")
+if [ -n "$STALE" ]; then
+    echo "ABORT: FlashInfer ${FI_VER} kernels would be recompiled by every rank:"
+    echo "$STALE"
+    echo "Fix in a 1-node job first: ~/musica-setup/fi-cache-check.sh --fix <dir>"
+    exit 3
+fi
+echo "Kernels: FlashInfer ${FI_VER} cache ok"
+
 PORT=8000
 RAY_PORT=6379
 RPC_PORT=29600
