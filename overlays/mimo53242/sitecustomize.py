@@ -1,3 +1,4 @@
+# BROKEN 2026-09-28: with this overlay MiMo-V2.5 loads but generates gibberish (Linz 135504, Vienna 1772879). Use overlays/mimo57508 instead.
 # Job-local fix for vllm#53242 (MiMo-V2 FP8 fused-QKV block-scale sharding), applied at import time.
 # Put this dir on PYTHONPATH for a MiMo-V2.5 (non-Pro) job only. The shared venv is NOT modified,
 # because the same fix silently mis-loads MiMo-V2.5-Pro. Fails loudly if the source does not match.
