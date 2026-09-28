@@ -2,3 +2,4 @@ logs/
 *.out
 *.err
 slurm-*.out
+__pycache__/
