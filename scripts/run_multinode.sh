@@ -67,7 +67,7 @@ echo "Site:    ${MUSICA_SITE}  venv: ${VENV%/bin/activate}  HF_HOME: $HF_HOME"
 # A FlashInfer kernel that ninja sees as stale gets rebuilt by EVERY rank at once in the same dir
 # (the Aug 2026 fused_moe_90 race). Abort instead of letting the ranks race.
 FI_VER=$(python -c 'import flashinfer; print(flashinfer.__version__)' 2>/dev/null)
-STALE=$(~/musica-setup/fi-cache-check.sh 2>&1 | grep "^STALE" | grep " ${FI_VER}/")
+STALE=$(~/musica-setup/fi-cache-check.sh 2>&1 | grep "^STALE" | grep " ${FI_VER}/" | grep -v "\.stale")
 if [ -n "$STALE" ]; then
     # Rebuild once here, single process, before any rank starts; otherwise every rank compiles it at once.
     # Limit: this builds the recipe on disk. fused_moe_90's source list differs per model (FlashInfer 0.6.17),
@@ -79,7 +79,7 @@ if [ -n "$STALE" ]; then
         MAX_JOBS=8 ~/musica-setup/fi-cache-check.sh --fix "$d" | grep -v -E "^(ok|STALE) "
         echo "  rebuilt $d in $(( $(date +%s) - t0 ))s"
     done
-    STALE=$(~/musica-setup/fi-cache-check.sh 2>&1 | grep "^STALE" | grep " ${FI_VER}/")
+    STALE=$(~/musica-setup/fi-cache-check.sh 2>&1 | grep "^STALE" | grep " ${FI_VER}/" | grep -v "\.stale")
     if [ -n "$STALE" ]; then
         echo "ABORT: still stale after rebuild:"; echo "$STALE"; exit 3
     fi
