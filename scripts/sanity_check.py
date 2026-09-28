@@ -61,11 +61,13 @@ TESTS = [  # (kind, prompt, required substring, must be English)
 ]
 
 failures = []
+heuristic_only = True  # language and length checks are guesses; known-answer and degeneracy checks are not
 for kind, prompt, answer, need_english in TESTS:
     try:
         text = completion(prompt) if kind == "completion" else chat(prompt)
     except Exception as e:  # a server error on a known-answer prompt is a failed check, reported as such
         failures.append(f"{kind} '{prompt[:30]}': {type(e).__name__}: {str(e)[:120]}")
+        heuristic_only = False
         print(f"  ERROR {kind}: {prompt[:40]!r} -> {e}", flush=True)
         continue
     why = []
@@ -74,6 +76,8 @@ for kind, prompt, answer, need_english in TESTS:
     bad = degenerate(text)
     if bad:
         why.append(f"degenerate ({bad})")
+    if why:
+        heuristic_only = False
     if need_english and not english(text):
         why.append("not English")
     if kind == "chat" and len(text) > 400:
@@ -82,5 +86,7 @@ for kind, prompt, answer, need_english in TESTS:
     if why:
         failures.append(f"{kind} '{prompt[:30]}': {'; '.join(why)}")
 
+if failures and heuristic_only:
+    print("NOTE: only the language/length heuristics fired; read the replies above before retiring this model", flush=True)
 print("SANITY PASS" if not failures else "SANITY FAIL: " + " | ".join(failures), flush=True)
 sys.exit(1 if failures else 0)
