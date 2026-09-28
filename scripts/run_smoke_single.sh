@@ -32,6 +32,14 @@ export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}
 source "${VENV:-$MUSICA_VENV}/bin/activate"
 # Job-local source fix (e.g. overlays/mimo53242), never a patch to the shared venv
 [ -n "${PY_OVERLAY:-}" ] && export PYTHONPATH=$PY_OVERLAY:${PYTHONPATH:-} && echo "PY_OVERLAY: $PY_OVERLAY"
+# Compiled-kernel check: a stale FlashInfer kernel is rebuilt once here, before the TP ranks start and race on it
+FI_VER=$(python -c 'import flashinfer; print(flashinfer.__version__)' 2>/dev/null)
+STALE=$([ -n "$FI_VER" ] && ~/musica-setup/fi-cache-check.sh 2>&1 | grep "^STALE" | grep " ${FI_VER}/" | grep -v "\.stale")
+for d in $(echo "$STALE" | awk '{print $2}'); do
+    t0=$(date +%s); ~/musica-setup/fi-cache-check.sh --fix "$d" | grep -v -E "^(ok|STALE) "
+    echo "Kernels: rebuilt $d once in $(( $(date +%s) - t0 ))s"
+done
+[ -n "$FI_VER" ] && echo "Kernels: FlashInfer ${FI_VER} checked"
 
 TRUST_FLAG=""
 [ "${TRUST_REMOTE_CODE:-false}" = "true" ] && TRUST_FLAG="--trust-remote-code"
