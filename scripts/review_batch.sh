@@ -10,7 +10,8 @@
 # Serves the model exactly as its configs/single2026/<model>.conf passed, with a longer context for real pages.
 #   sbatch -J review-mimo -o logs/review/%x_%j.out scripts/review_batch.sh configs/single2026/mimo_v25.conf <in.jsonl> <out.jsonl>
 # Env: REVIEW_MAX_MODEL_LEN (default 32768), REVIEW_MAX_NUM_SEQS (64), REVIEW_CONCURRENCY (64),
-#      REVIEW_TEMPLATE_KWARGS (JSON, default '{"enable_thinking": false}').
+#      REVIEW_TEMPLATE_KWARGS (JSON, default '{"enable_thinking": false}'),
+#      REVIEW_SAMPLE_N / REVIEW_SAMPLE_TOKENS (default 0 / 30): also write N prompts with 30 tokens of text to <out>.sample30.jsonl
 # Resumable: rerun with the same output file and only unscored ids are sent.
 set -uo pipefail
 CONFIG="${1:?usage: review_batch.sh <conf> <in.jsonl> <out.jsonl>}"; IN="${2:?}"; OUT="${3:?}"
@@ -60,5 +61,10 @@ echo "ready after $(( $(date +%s) - t0 ))s"
 python3 "$GUIDE/scripts/review_client.py" "http://localhost:$PORT" "$SERVED_NAME" "$IN" "$OUT" "${REVIEW_CONCURRENCY:-64}" 20
 rc=$?
 echo "REVIEW client exit=$rc, output lines: $(wc -l < "$OUT")"
+# Readable sample: first N prompts with REVIEW_SAMPLE_TOKENS of text, to see what the answer really starts with
+if [ "${REVIEW_SAMPLE_N:-0}" -gt 0 ]; then
+  REVIEW_MAX_TOKENS=${REVIEW_SAMPLE_TOKENS:-30} REVIEW_LIMIT=$REVIEW_SAMPLE_N \
+    python3 "$GUIDE/scripts/review_client.py" "http://localhost:$PORT" "$SERVED_NAME" "$IN" "${OUT%.jsonl}.sample${REVIEW_SAMPLE_TOKENS:-30}.jsonl" 4 20
+fi
 kill $SERVER_PID 2>/dev/null; wait 2>/dev/null
 exit $rc

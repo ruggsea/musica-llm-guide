@@ -7,6 +7,7 @@ Resumable: ids already in the output are skipped. Errors are counted and printed
 
   review_client.py <base_url> <served_name> <in.jsonl> <out.jsonl> [concurrency] [top_k]
 Default chat_template_kwargs come from $REVIEW_TEMPLATE_KWARGS (JSON), e.g. '{"enable_thinking": false}'.
+$REVIEW_MAX_TOKENS (default 1) and $REVIEW_LIMIT (first N input lines only) are for a readable text sample.
 """
 import json
 import os
@@ -20,12 +21,16 @@ base, served, in_path, out_path = sys.argv[1:5]
 concurrency = int(sys.argv[5]) if len(sys.argv) > 5 else 32
 top_k = int(sys.argv[6]) if len(sys.argv) > 6 else 20
 default_kwargs = json.loads(os.environ.get("REVIEW_TEMPLATE_KWARGS", "{}"))
+max_tokens = int(os.environ.get("REVIEW_MAX_TOKENS", "1"))
+limit = int(os.environ.get("REVIEW_LIMIT", "0"))
 
 done = set()
 if os.path.exists(out_path):
     with open(out_path) as f:
         done = {json.loads(line)["id"] for line in f if line.strip()}
 rows = [json.loads(line) for line in open(in_path) if line.strip()]
+if limit:
+    rows = rows[:limit]
 ids = [r["id"] for r in rows]
 assert len(ids) == len(set(ids)), "duplicate ids in input"
 todo = [r for r in rows if r["id"] not in done]
@@ -36,7 +41,7 @@ def score(row):
     body = {
         "model": served,
         "messages": row["messages"],
-        "max_tokens": 1,
+        "max_tokens": max_tokens,
         "temperature": 0.0,
         "logprobs": True,
         "top_logprobs": top_k,
