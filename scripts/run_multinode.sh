@@ -122,7 +122,10 @@ python3 -c "from huggingface_hub import snapshot_download; print(snapshot_downlo
 echo "[$(date +%H:%M:%S)] Download complete."
 
 # ── Get node topology ────────────────────────────────────────
-ALL_NODES=$(scontrol show hostnames $SLURM_JOB_NODELIST)
+# scontrol can come back empty on a transient controller hiccup (job 1773023: no head node, Ray never started,
+# vLLM waited 40+ min for a 16-GPU placement group). Retry, then abort instead of hanging.
+for try in 1 2 3; do ALL_NODES=$(scontrol show hostnames $SLURM_JOB_NODELIST); [ -n "$ALL_NODES" ] && break; sleep 10; done
+[ -n "$ALL_NODES" ] || { echo "ABORT: scontrol show hostnames  returned nothing"; exit 4; }
 HEAD_NODE=$(echo "$ALL_NODES" | head -n 1)
 HEAD_IP=$(srun -N 1 -n 1 -w ${HEAD_NODE} hostname --ip-address 2>/dev/null | head -1)
 WORKER_NODES=$(echo "$ALL_NODES" | tail -n +2)
