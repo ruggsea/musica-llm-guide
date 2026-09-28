@@ -57,6 +57,7 @@ for i in $(seq 1 360); do
 done
 [ $ready -eq 1 ] || { echo "REVIEW FAIL: server not ready"; kill $SERVER_PID 2>/dev/null; exit 2; }
 echo "ready after $(( $(date +%s) - t0 ))s"
+python3 "$GUIDE/scripts/sanity_check.py" "http://localhost:$PORT" "$SERVED_NAME" || { echo "REVIEW FAIL: model answers are not sane, nothing scored"; kill $SERVER_PID 2>/dev/null; exit 3; }
 
 python3 "$GUIDE/scripts/review_client.py" "http://localhost:$PORT" "$SERVED_NAME" "$IN" "$OUT" "${REVIEW_CONCURRENCY:-64}" 20
 rc=$?

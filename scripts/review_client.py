@@ -8,6 +8,8 @@ Resumable: ids already in the output are skipped. Errors are counted and printed
   review_client.py <base_url> <served_name> <in.jsonl> <out.jsonl> [concurrency] [top_k]
 Default chat_template_kwargs come from $REVIEW_TEMPLATE_KWARGS (JSON), e.g. '{"enable_thinking": false}'.
 $REVIEW_MAX_TOKENS (default 1) and $REVIEW_LIMIT (first N input lines only) are for a readable text sample.
+$REVIEW_LABELS="AGENT,HUMAN": also check that >= $REVIEW_LABEL_MIN (0.95) of top-1 first tokens begin one of those words
+(a token is a label start if, stripped and upper-cased, it is a non-empty prefix of a label); below that, exit 4.
 """
 import json
 import os
@@ -61,6 +63,9 @@ def score(row):
     }
 
 
+labels = [w.strip().upper() for w in os.environ.get("REVIEW_LABELS", "").split(",") if w.strip()]
+label_min = float(os.environ.get("REVIEW_LABEL_MIN", "0.95"))
+top1 = []
 lock = threading.Lock()
 n_ok = n_err = prompt_tokens = 0
 t0 = time.monotonic()
@@ -77,6 +82,7 @@ with open(out_path, "a") as out, ThreadPoolExecutor(concurrency) as pool:
             out.write(json.dumps(res) + "\n")
             out.flush()
         n_ok += 1
+        top1.append(res["top_logprobs"][0][0] if res["top_logprobs"] else "")
         prompt_tokens += res["prompt_tokens"]
         if n_ok % 100 == 0:
             el = time.monotonic() - t0
@@ -85,4 +91,14 @@ with open(out_path, "a") as out, ThreadPoolExecutor(concurrency) as pool:
 el = time.monotonic() - t0
 print(f"REVIEW scored={n_ok} errors={n_err} seconds={el:.0f} pages_per_s={n_ok/max(el,1e-9):.2f} "
       f"prompt_tok_per_s={prompt_tokens/max(el,1e-9):.0f} concurrency={concurrency}", flush=True)
+if labels and top1:
+    def is_label(tok):
+        t = tok.strip().upper()
+        return bool(t) and any(w.startswith(t) for w in labels)
+    frac = sum(map(is_label, top1)) / len(top1)
+    from collections import Counter
+    print(f"LABEL CHECK {'ok' if frac >= label_min else 'FAIL'}: {frac:.1%} of top-1 first tokens begin {labels} "
+          f"(need {label_min:.0%}); most common: {Counter(top1).most_common(5)}", flush=True)
+    if frac < label_min:
+        sys.exit(4)
 sys.exit(1 if n_err else 0)

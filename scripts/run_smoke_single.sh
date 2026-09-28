@@ -75,14 +75,7 @@ if [ $ready -eq 1 ]; then
   echo "raw: $(echo "$response" | head -c 400)"
   echo "$response" | grep -q '"choices"' && RESULT="PASS"
   # Coherence check: a reply coming back is not a pass (MiMo-V2.5 "passed" 2026-09-27 on gibberish)
-  sanity=$(curl -s --max-time 600 http://localhost:$PORT/v1/completions -H "Content-Type: application/json" \
-    -d '{"model":"'"$SERVED_NAME"'","prompt":"The capital of France is","max_tokens":16,"temperature":0}' 2>&1 \
-    | python3 -c 'import sys,json
-try: t=json.load(sys.stdin)["choices"][0]["text"]
-except Exception: t=""
-print(("SANE " if "paris" in t.lower() else "INCOHERENT ")+repr(t[:80]))')
-  echo "Sanity: $sanity"
-  case "$sanity" in SANE*) ;; *) RESULT="FAIL"; echo "FAIL: output is not coherent text";; esac
+  python3 "${GUIDE_DIR:-$HOME/musica-llm-guide}/scripts/sanity_check.py" "http://localhost:$PORT" "$SERVED_NAME" || { RESULT="FAIL"; echo "FAIL: answers are not sane (see SANITY lines)"; }
   if [ "$RESULT" = "PASS" ]; then
     perf=$(python3 "${GUIDE_DIR:-$HOME/musica-llm-guide}/scripts/measure_perf.py" \
              "http://localhost:$PORT" "$SERVED_NAME" 128 2>&1) || true
