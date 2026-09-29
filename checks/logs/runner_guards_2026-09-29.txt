@@ -1,0 +1,16 @@
+# checks/runner_guards_test.sh on login01, 2026-09-29T15:24:58Z, runner d833b68
+== Ray GPU check: stub reports 12 GPUs, need 16
+[17:24:58] Verifying Ray cluster...
+  GPUs: 12.0, Nodes: 3
+RESULT: FAIL (Ray cluster has fewer than 16 GPUs)
+exit=1
+== Ray GPU check: stub reports 16 GPUs, need 16
+[17:24:58] Verifying Ray cluster...
+  GPUs: 16.0, Nodes: 4
+carried on
+exit=0
+== Worker IP lookup: login01 node names, then an unknown one with srun stubbed to return nothing
+  n3010-019 -> 10.77.10.19
+  n3010-020 -> 10.77.10.20
+RESULT: FAIL (no IP for worker n9999-999)
+exit=1
