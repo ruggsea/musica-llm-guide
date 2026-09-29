@@ -335,6 +335,12 @@ if [ $ready -eq 1 ]; then
             echo "  perf measurement failed (PASS verdict unaffected):"
             echo "$perf" | tail -5
         fi
+        # Optional work against the live server once it passed (e.g. a batched review): conf sets POST_PASS_CMD
+        if [ "$RESULT" = "PASS" ] && [ -n "${POST_PASS_CMD:-}" ]; then
+            echo "[$(date +%H:%M:%S)] POST_PASS_CMD: $POST_PASS_CMD"
+            BASE_URL="http://localhost:${PORT}" SERVED_NAME="$SERVED_NAME" bash -c "$POST_PASS_CMD"
+            echo "[$(date +%H:%M:%S)] POST_PASS_CMD exit $?"
+        fi
     else
         echo "Generation failed: $(echo "$response" | head -c 500)"
     fi
