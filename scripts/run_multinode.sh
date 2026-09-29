@@ -162,7 +162,10 @@ if [ "$MODE" = "pp" ]; then
     # Start Ray workers
     echo "[$(date +%H:%M:%S)] Starting Ray workers"
     for WORKER in $WORKER_NODES; do
-        WORKER_IP=$(srun -N 1 -n 1 -w ${WORKER} hostname --ip-address 2>/dev/null | head -1)
+        # getent needs no job step; an srun here came back empty once when a node's prolog hung (1776673)
+        WORKER_IP=$(getent hosts ${WORKER} | awk '{print $1; exit}')
+        [ -z "$WORKER_IP" ] && WORKER_IP=$(srun -N 1 -n 1 -w ${WORKER} hostname --ip-address 2>/dev/null | head -1)
+        [ -z "$WORKER_IP" ] && { echo "RESULT: FAIL (no IP for worker ${WORKER})"; exit 1; }
         srun -J "ray-worker" -N 1 -n 1 -w ${WORKER} --gpus-per-task=4 \
           bash -c "
             source $VENV
@@ -179,7 +182,12 @@ import ray; ray.init(address='${HEAD_IP}:${RAY_PORT}')
 r = ray.cluster_resources(); n = [x for x in ray.nodes() if x['Alive']]
 print(f'  GPUs: {r.get(\"GPU\",0)}, Nodes: {len(n)}')
 ray.shutdown()
-" 2>/dev/null || echo "  WARNING: Could not verify Ray cluster"
+raise SystemExit(0 if r.get(\"GPU\",0) >= ${TP}*${PP} else 3)
+" 2>/dev/null
+    RAY_OK=$?
+    # vLLM would otherwise wait 30 min for GPUs that never join (1776673: a worker failed, 12 of 16 GPUs)
+    [ $RAY_OK -eq 3 ] && { echo "RESULT: FAIL (Ray cluster has fewer than $((TP*PP)) GPUs)"; exit 1; }
+    [ $RAY_OK -ne 0 ] && echo "  WARNING: Could not verify Ray cluster"
 
     # Launch vLLM serve
     echo "[$(date +%H:%M:%S)] Launching vLLM serve (PP mode)"
