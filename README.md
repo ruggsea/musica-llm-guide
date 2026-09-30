@@ -239,6 +239,10 @@ This is where most of the pain was. FP8 MoE models (DeepSeek, Kimi, MiniMax, Mis
 - **FlashInfer 0.6.17 `fused_moe_90` is per model, not per site.** Its build.ninja is written at JIT time from a source list that depends on the model: the generic prime / GLM-5.1 recipe has 9 sm80 grouped-gemm objects, MiMo-V2.5-Pro's has none (found 2026-09-28, Vienna job 1770422). Same folder name, so a model with a different recipe sees the kernel as stale and every rank rebuilds it at once (MiMo-Pro: 24 ranks, 25+ min, engine-ready timeout). Copying a tree verified at another site does NOT help if it was built for another model. `scripts/run_multinode.sh` now rebuilds a stale kernel once on the head node before ranks start (~36 min for fused_moe_90 at -j8), and each site's CACHE_COORDINATION.md notes which model's recipe the folder holds.
 - **SSH tunnel for API**: `ssh -NL 8000:<node>:8000 user@musica.vsc.ac.at`
 
+## JAX (not an LLM)
+
+JAX 0.11 on one H100, Python 3.12 venv: see [jax.md](jax.md). Verified at inn only (2026-09-30, jobs 155710, 155715).
+
 ## Scripts
 
 This repo includes ready-to-use SLURM scripts in `scripts/`:
