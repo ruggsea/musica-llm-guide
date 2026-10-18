@@ -57,7 +57,13 @@ streams of 512 tokens). Test kit and job logs: musica-guide-loop `kit/`, `/data/
 
 | Model | Lane | venv / vLLM | Flags (exactly as served) | Env | Result | Load | Mem/GPU | tok/s 1 / 16 streams | Known failures -> fix |
 |---|---|---|---|---|---|---|---|---|---|
-| deepseek-ai/DeepSeek-V4-Flash-0731 | Linz 1 node 4x H100 (job 159667, 2026-10-18) | venvs/vllm-0.32.0 (torch 2.13+cu130, flashinfer 0.7.0.post1) | `--trust-remote-code --tensor-parallel-size 4 --max-model-len 131072 --max-num-seqs 16 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.85 --kv-cache-dtype fp8 --block-size 256 --tokenizer-mode deepseek_v4 --enable-auto-tool-choice --tool-call-parser deepseek_v4 --reasoning-parser deepseek_v4 --enable-prefix-caching` | `VLLM_USE_FLASHINFER_SAMPLER=0` | **PASS** (sanity 5/5, tool loop 40/40) | 1501 s (530 s weights, 785 s first-time graph capture/compile) | 80.7 GiB | 145 / 632 | vLLM 0.25.1 default: crash at start in FlashInfer `TopKMaskLogits ... invalid resource handle` (Linz 159642) -> `VLLM_USE_FLASHINFER_SAMPLER=0`. vLLM 0.25.1 with that fix (159653): loads in 255 s, tool loop 40/40, 137 / 1376 tok/s, but answers "17 + 25" with "32" (sanity FAIL) -> use vLLM 0.32.0. |
+| deepseek-ai/DeepSeek-V4-Flash-0731 | Linz 1 node 4x H100 (job 159667, 2026-10-18) | venvs/vllm-0.32.0 (torch 2.13+cu130, flashinfer 0.7.0.post1) | `--trust-remote-code --tensor-parallel-size 4 --max-model-len 131072 --max-num-seqs 16 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.85 --kv-cache-dtype fp8 --block-size 256 --tokenizer-mode deepseek_v4 --enable-auto-tool-choice --tool-call-parser deepseek_v4 --reasoning-parser deepseek_v4 --enable-prefix-caching` | `VLLM_USE_FLASHINFER_SAMPLER=0` | **PASS** (sanity 4/4, tool loop 40/40) | 1501 s (530 s weights, 785 s first-time graph capture/compile) | 80.7 GiB | 145 / 632 | vLLM 0.25.1 default: crash at start in FlashInfer `TopKMaskLogits ... invalid resource handle` (Linz 159642) -> `VLLM_USE_FLASHINFER_SAMPLER=0`. vLLM 0.25.1 with that fix (159653): loads in 255 s, tool loop 40/40, 137 / 1376 tok/s, but answers "17 + 25" with "32" (sanity FAIL) -> use vLLM 0.32.0. |
+
+**Known failure, vLLM 0.25.1 (seen 2026-10-18):** DeepSeek-V4-Flash-0731 on 0.25.1 (with `VLLM_USE_FLASHINFER_SAMPLER=0`)
+answers "What is 17 + 25?" with "32"; the same weights and flags on 0.32.0 answer "42". Seen with that one model only so far.
+The same check run the same day against our live engines: gpt-oss-120b (artemis, callisto) and Qwen3.8-27B (callisto) all
+answer 42. PASS rows on 0.25.1 dated before 2026-09-28 never ran `scripts/sanity_check.py` (it holds this question), so
+treat them as unchecked on arithmetic; that includes the GSC1 `/cl_tmp/lazzaron/vllm-venv` (0.25.1) pi-engine lane.
 
 ## 1. Closed/Proprietary Models
 
