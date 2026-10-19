@@ -205,7 +205,7 @@ PP is broken for DeepSeek-V3/V3.2, Mistral-Large-3 (`PixtralForConditionalGenera
 
 | Model | HF ID | Mode | VRAM/GPU | Load | Notes |
 |-------|-------|------|----------|------|-------|
-| Kimi-K2 (1032B) | `moonshotai/Kimi-K2-Instruct` | DP+EP | 73.5 GiB | 371s | needs `blobfile` |
+| Kimi-K2 (1032B) | `moonshotai/Kimi-K2-Instruct` | DP+EP | 73.5 GiB | 371s | needs `blobfile`. Also TP4 x PP4 over Ray on vllm-nightly d125b540b, `--max-model-len 65536` (Vienna 1852928, 2026-10-19, persona-sweep: 50,000 short prompts scored in 431 s) |
 | Kimi-K2.5 (1058B) | `moonshotai/Kimi-K2.5` | DP+EP | ~66 GiB | 391s | needs `blobfile` |
 | Kimi-K2-Thinking (1032B) | `moonshotai/Kimi-K2-Thinking` | DP+EP | 55.3 GiB | 341s | INT4 QAT, `--trust-remote-code` |
 
@@ -240,6 +240,9 @@ This is where most of the pain was. FP8 MoE models (DeepSeek, Kimi, MiniMax, Mis
 - **SSH tunnel for API**: `ssh -NL 8000:<node>:8000 user@musica.vsc.ac.at`
 
 - **Linz compute nodes lose Hugging Face downloads under parallel big pulls** (persona-sweep, Linz, 2026-10-19; Vienna was fine the same night). With Xet on (default): "Name or service not known" and Xet CAS errors on us.aws.cdn.hf.co, 46 of 52 jobs failed. With `HF_HUB_DISABLE_XET=1` (plain HTTP, 16 workers per node, job 160146, DeepSeek-V3.2 to /local on 3 nodes): no CAS errors, but still only 1 of 3 nodes finished (n3016-009, 709 GB in 1,999 s); n3016-010 failed with "The read operation timed out" on a safetensors shard, n3016-013 with "httpx.ConnectError: [Errno -2] Name or service not known". So turning Xet off is not a fix. **Until the cause is known: at Linz, use weights already on /data (pre-staged), or download at Vienna.** Untested: fewer workers per node, one node downloading at a time.
+
+- **Downloading weights to each node's /local works at Vienna, not at Linz** (persona-sweep, 2026-10-19). Kimi-K2-Instruct, 4 nodes, each node pulling its own copy to /local over plain HTTP (`HF_HUB_DISABLE_XET=1`): Vienna job 1852928, 4 of 4 nodes succeeded, download plus load about 40 min of a 51-min job. The same download at Linz (160128, Xet on) failed on 4 of 4 nodes with Xet CAS errors. With Ray, teardown at the end makes srun print exit 1 although the job ends COMPLETED 0:0: judge the job by `sacct`, not by that line.
+- **Linz can hold queued jobs with "slurm_cred_create failure, holding job"** (SystemComment, Restarts=1; 2026-10-19: 164 persona-sweep idle-QoS jobs plus imitation-game 160125 and ccscan 160764). Users cannot release them. Cancel by job id and resubmit; that works.
 
 ## JAX (not an LLM)
 
